@@ -2,3 +2,4 @@ output/
 logs/
 sample/
 __pycache__/
+benchmark/
