@@ -17,7 +17,311 @@ from PIL import Image, ImageDraw
 from transformers import CLIPProcessor, CLIPModel
 import sys
 sys.path.insert(0, str(Path.home() / '.cache/torch/hub/Megvii-BaseDetection_YOLOX_main'))
-from yolox.utils import postprocess
+try:
+    from yolox.utils.boxes import postprocess
+except ImportError:
+    print("Warning: YOLOX not found. Will use alternative postprocessing.")
+    def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False):
+        """Fallback postprocess function"""
+        return prediction
+
+
+def apply_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5) -> list:
+    """
+    Apply Non-Maximum Suppression to remove overlapping detections.
+
+    Args:
+        boxes: Tensor of shape (N, 4) with bounding boxes
+        scores: Tensor of shape (N,) with confidence scores
+        iou_threshold: IoU threshold for NMS (higher = more overlap allowed)
+
+    Returns:
+        List of indices to keep
+    """
+    if len(boxes) == 0:
+        return []
+
+    # Convert to tensor if needed
+    if not isinstance(boxes, torch.Tensor):
+        boxes = torch.tensor(boxes)
+    if not isinstance(scores, torch.Tensor):
+        scores = torch.tensor(scores)
+
+    # Apply NMS
+    from torchvision.ops import nms
+    keep_indices = nms(boxes, scores, iou_threshold)
+    return keep_indices.tolist()
+
+
+def remove_contained_boxes(boxes: torch.Tensor, scores: torch.Tensor, containment_threshold: float = 0.5) -> list:
+    """
+    Remove boxes that are mostly contained within other boxes.
+
+    When a smaller box is contained within a larger box, standard NMS may not
+    remove it because IoU = intersection / union can be low when sizes differ greatly.
+    This function checks if a box is mostly contained within another and keeps
+    the one with higher confidence.
+
+    Args:
+        boxes: Tensor of shape (N, 4) with bounding boxes [x1, y1, x2, y2]
+        scores: Tensor of shape (N,) with confidence scores
+        containment_threshold: If intersection / smaller_box_area > threshold,
+                               consider the smaller box as contained
+
+    Returns:
+        List of indices to keep
+    """
+    if len(boxes) == 0:
+        return []
+
+    if not isinstance(boxes, torch.Tensor):
+        boxes = torch.tensor(boxes)
+    if not isinstance(scores, torch.Tensor):
+        scores = torch.tensor(scores)
+
+    n = len(boxes)
+    keep = [True] * n
+
+    # Calculate areas
+    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+
+    for i in range(n):
+        if not keep[i]:
+            continue
+        for j in range(n):
+            if i == j or not keep[j]:
+                continue
+
+            # Calculate intersection
+            x1 = max(boxes[i][0].item(), boxes[j][0].item())
+            y1 = max(boxes[i][1].item(), boxes[j][1].item())
+            x2 = min(boxes[i][2].item(), boxes[j][2].item())
+            y2 = min(boxes[i][3].item(), boxes[j][3].item())
+
+            if x2 <= x1 or y2 <= y1:
+                continue  # No intersection
+
+            intersection = (x2 - x1) * (y2 - y1)
+
+            # Check if smaller box is contained in larger box
+            smaller_area = min(areas[i].item(), areas[j].item())
+            containment_ratio = intersection / smaller_area
+
+            if containment_ratio > containment_threshold:
+                # One box is mostly contained within the other
+                # Keep the one with higher score
+                if scores[i] >= scores[j]:
+                    keep[j] = False
+                else:
+                    keep[i] = False
+                    break  # Box i is removed, move to next i
+
+    return [i for i in range(n) if keep[i]]
+
+
+def remove_edge_boxes(boxes: torch.Tensor, image_size: tuple, edge_margin: float = 0.02, min_visible_ratio: float = 0.5) -> list:
+    """
+    Remove boxes that are cut off at image edges (likely partial/incomplete detections).
+
+    Args:
+        boxes: Tensor of shape (N, 4) with bounding boxes [x1, y1, x2, y2]
+        image_size: Tuple of (width, height) of the image
+        edge_margin: Margin from edge as fraction of image size to consider "at edge"
+        min_visible_ratio: Minimum ratio of box that must be away from edges
+
+    Returns:
+        List of indices to keep
+    """
+    if len(boxes) == 0:
+        return []
+
+    if not isinstance(boxes, torch.Tensor):
+        boxes = torch.tensor(boxes)
+
+    img_width, img_height = image_size
+    margin_x = img_width * edge_margin
+    margin_y = img_height * edge_margin
+
+    keep = []
+    for i, box in enumerate(boxes):
+        x1, y1, x2, y2 = box[0].item(), box[1].item(), box[2].item(), box[3].item()
+        box_width = x2 - x1
+        box_height = y2 - y1
+
+        # Check if box is touching edges
+        at_left = x1 < margin_x
+        at_right = x2 > img_width - margin_x
+        at_top = y1 < margin_y
+        at_bottom = y2 > img_height - margin_y
+
+        # If box is at edge, check if it's likely cut off
+        # A cut-off box will have unusual aspect ratio or be very thin
+        if at_left or at_right or at_top or at_bottom:
+            # Calculate how much of the box is "inside" vs at edge
+            # For edge boxes, check aspect ratio - very thin boxes are likely partial
+            aspect_ratio = box_width / box_height if box_height > 0 else 0
+
+            # Skip very thin boxes at edges (likely partial detections)
+            if aspect_ratio < 0.3 or aspect_ratio > 3.0:
+                continue
+
+            # Skip boxes where a large portion is at the very edge
+            if at_right and (img_width - x1) < box_width * min_visible_ratio:
+                continue
+            if at_left and x2 < box_width * min_visible_ratio:
+                continue
+            if at_bottom and (img_height - y1) < box_height * min_visible_ratio:
+                continue
+            if at_top and y2 < box_height * min_visible_ratio:
+                continue
+
+        keep.append(i)
+
+    return keep
+
+
+def remove_size_outliers(boxes: torch.Tensor, std_threshold: float = 3.0) -> list:
+    """
+    Remove boxes that are size outliers (too small or too large compared to median).
+
+    Args:
+        boxes: Tensor of shape (N, 4) with bounding boxes [x1, y1, x2, y2]
+        std_threshold: Number of standard deviations from median to consider outlier
+
+    Returns:
+        List of indices to keep
+    """
+    if len(boxes) < 3:  # Need enough boxes to calculate statistics
+        return list(range(len(boxes)))
+
+    if not isinstance(boxes, torch.Tensor):
+        boxes = torch.tensor(boxes)
+
+    # Calculate box areas
+    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+    areas_np = areas.numpy()
+
+    median_area = np.median(areas_np)
+    std_area = np.std(areas_np)
+
+    # Keep boxes within threshold standard deviations of median
+    min_area = median_area - std_threshold * std_area
+    max_area = median_area + std_threshold * std_area
+
+    keep = []
+    for i, area in enumerate(areas_np):
+        if min_area <= area <= max_area:
+            keep.append(i)
+
+    return keep
+
+
+def remove_aspect_ratio_outliers(boxes: torch.Tensor, min_ratio: float = 0.45, max_ratio: float = 2.2) -> list:
+    """
+    Remove boxes with unusual aspect ratios.
+
+    Most objects like blueberries are roughly square. This filter removes
+    boxes that are too elongated (likely false positives from shadows/gaps).
+
+    Args:
+        boxes: Tensor of shape (N, 4) with bounding boxes [x1, y1, x2, y2]
+        min_ratio: Minimum width/height ratio
+        max_ratio: Maximum width/height ratio
+
+    Returns:
+        List of indices to keep
+    """
+    if len(boxes) == 0:
+        return []
+
+    if not isinstance(boxes, torch.Tensor):
+        boxes = torch.tensor(boxes)
+
+    keep = []
+    for i, box in enumerate(boxes):
+        width = box[2] - box[0]
+        height = box[3] - box[1]
+        if height > 0:
+            ratio = width / height
+            if min_ratio <= ratio <= max_ratio:
+                keep.append(i)
+
+    return keep
+
+
+def filter_contained_across_queries(all_results: list, containment_threshold: float = 0.7) -> list:
+    """
+    Filter out detections from one query that are contained within detections from another query.
+
+    This handles cases like blueberries on cheesecakes - the blueberry boxes are contained
+    within cheesecake boxes, so we keep only the larger container objects.
+
+    Args:
+        all_results: List of result dictionaries from count_objects, each with 'detections' list
+        containment_threshold: If intersection / smaller_box_area > threshold,
+                               consider the smaller box as contained
+
+    Returns:
+        Updated all_results with contained detections removed
+    """
+    if len(all_results) < 2:
+        return all_results
+
+    # Collect all boxes with their query index
+    all_boxes = []  # List of (query_idx, detection_idx, box, area)
+    for q_idx, result in enumerate(all_results):
+        for d_idx, det in enumerate(result['detections']):
+            box = det['box']
+            area = (box[2] - box[0]) * (box[3] - box[1])
+            all_boxes.append((q_idx, d_idx, box, area))
+
+    # Track which detections to remove
+    to_remove = set()  # Set of (query_idx, detection_idx)
+
+    # Compare boxes across different queries
+    for i, (q_idx_i, d_idx_i, box_i, area_i) in enumerate(all_boxes):
+        for j, (q_idx_j, d_idx_j, box_j, area_j) in enumerate(all_boxes):
+            if i >= j or q_idx_i == q_idx_j:
+                continue  # Skip same query or already compared pairs
+
+            # Calculate intersection
+            x1 = max(box_i[0], box_j[0])
+            y1 = max(box_i[1], box_j[1])
+            x2 = min(box_i[2], box_j[2])
+            y2 = min(box_i[3], box_j[3])
+
+            if x2 <= x1 or y2 <= y1:
+                continue  # No intersection
+
+            intersection = (x2 - x1) * (y2 - y1)
+
+            # Check containment ratio for the smaller box
+            smaller_area = min(area_i, area_j)
+            containment_ratio = intersection / smaller_area
+
+            if containment_ratio > containment_threshold:
+                # Remove the smaller box (it's contained in the larger one)
+                if area_i < area_j:
+                    to_remove.add((q_idx_i, d_idx_i))
+                else:
+                    to_remove.add((q_idx_j, d_idx_j))
+
+    # Create filtered results
+    filtered_results = []
+    for q_idx, result in enumerate(all_results):
+        filtered_detections = []
+        for d_idx, det in enumerate(result['detections']):
+            if (q_idx, d_idx) not in to_remove:
+                filtered_detections.append(det)
+
+        # Create new result with filtered detections
+        filtered_result = result.copy()
+        filtered_result['detections'] = filtered_detections
+        filtered_result['count'] = len(filtered_detections)
+        filtered_result['original_count'] = result['count']
+        filtered_results.append(filtered_result)
+
+    return filtered_results
 
 
 def create_ground_truth_image() -> Tuple[Image.Image, List[Dict]]:
@@ -92,8 +396,8 @@ class ObjectDetector:
     """YOLOX-Nano for class-agnostic object detection"""
     
     def __init__(self):
-        self.confidence_threshold = 0.000005  # Tuned threshold for cupcake detection
-        self.nms_threshold = 0.3  # Moderate NMS to merge overlapping detections
+        self.confidence_threshold = 0.000001  # Very low threshold to catch all objects
+        self.nms_threshold = 0.4  # Moderate NMS to merge overlapping detections
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
         
@@ -137,6 +441,7 @@ class ObjectDetector:
         )
         
         bounding_boxes = []
+        scores_list = []
         
         if processed_outputs is not None and len(processed_outputs) > 0:
             result = processed_outputs[0]  # Get first image results
@@ -147,6 +452,7 @@ class ObjectDetector:
                 # Result format: [x1, y1, x2, y2, objectness, class_conf, class_id]
                 for det in result:
                     x1, y1, x2, y2 = det[:4]
+                    objectness = det[4].item()
                     
                     # Scale to original image size
                     x1 = int(x1 * w / self.input_size[0])
@@ -160,8 +466,55 @@ class ObjectDetector:
                     
                     if x2 > x1 and y2 > y1:
                         bounding_boxes.append((x1, y1, x2, y2))
+                        scores_list.append(objectness)
             else:
                 print(f"  No objects detected")
+        
+        # Apply filtering utilities for improved accuracy
+        if len(bounding_boxes) > 0:
+            boxes_tensor = torch.tensor(bounding_boxes, dtype=torch.float32)
+            scores_tensor = torch.tensor(scores_list, dtype=torch.float32)
+            
+            initial_count = len(boxes_tensor)
+            
+            # Apply NMS (additional pass to ensure no overlaps)
+            keep_indices = apply_nms(boxes_tensor, scores_tensor, iou_threshold=self.nms_threshold)
+            boxes_tensor = boxes_tensor[keep_indices]
+            scores_tensor = scores_tensor[keep_indices]
+            if len(boxes_tensor) < initial_count:
+                print(f"  Applied NMS: {initial_count} -> {len(boxes_tensor)}")
+            
+            # Remove contained boxes (more lenient for small objects)
+            keep_indices = remove_contained_boxes(boxes_tensor, scores_tensor, containment_threshold=0.7)
+            boxes_tensor = boxes_tensor[keep_indices]
+            scores_tensor = scores_tensor[keep_indices]
+            if len(boxes_tensor) < initial_count:
+                print(f"  Removed contained boxes: {initial_count} -> {len(boxes_tensor)}")
+            
+            # Remove edge boxes (likely partial detections)
+            keep_indices = remove_edge_boxes(boxes_tensor, (w, h), edge_margin=0.01, min_visible_ratio=0.4)
+            boxes_tensor = boxes_tensor[keep_indices]
+            scores_tensor = scores_tensor[keep_indices]
+            if len(boxes_tensor) < initial_count:
+                print(f"  Removed edge boxes: {initial_count} -> {len(boxes_tensor)}")
+            
+            # Remove size outliers (more lenient)
+            keep_indices = remove_size_outliers(boxes_tensor, std_threshold=2.0)
+            boxes_tensor = boxes_tensor[keep_indices]
+            scores_tensor = scores_tensor[keep_indices]
+            if len(boxes_tensor) < initial_count:
+                print(f"  Removed size outliers: {initial_count} -> {len(boxes_tensor)}")
+            
+            # Remove aspect ratio outliers (wider range for various objects)
+            keep_indices = remove_aspect_ratio_outliers(boxes_tensor, min_ratio=0.35, max_ratio=2.8)
+            boxes_tensor = boxes_tensor[keep_indices]
+            if len(boxes_tensor) < initial_count:
+                print(f"  Removed aspect ratio outliers: {initial_count} -> {len(boxes_tensor)}")
+            
+            # Convert back to list of tuples
+            bounding_boxes = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in boxes_tensor.tolist()]
+            
+            print(f"  Final count after filtering: {len(bounding_boxes)}")
         
         return bounding_boxes
     

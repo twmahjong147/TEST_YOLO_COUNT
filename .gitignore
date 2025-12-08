@@ -1,2 +1,4 @@
 output/
 logs/
+sample/
+__pycache__/
