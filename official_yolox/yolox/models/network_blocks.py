@@ -6,14 +6,6 @@ import torch
 import torch.nn as nn
 
 
-class SiLU(nn.Module):
-    """export-friendly version of nn.SiLU()"""
-
-    @staticmethod
-    def forward(x):
-        return x * torch.sigmoid(x)
-
-
 def get_activation(name="silu", inplace=True):
     if name == "silu":
         module = nn.SiLU(inplace=inplace)
@@ -99,24 +91,6 @@ class Bottleneck(nn.Module):
         if self.use_add:
             y = y + x
         return y
-
-
-class ResLayer(nn.Module):
-    "Residual layer with `in_channels` inputs."
-
-    def __init__(self, in_channels: int):
-        super().__init__()
-        mid_channels = in_channels // 2
-        self.layer1 = BaseConv(
-            in_channels, mid_channels, ksize=1, stride=1, act="lrelu"
-        )
-        self.layer2 = BaseConv(
-            mid_channels, in_channels, ksize=3, stride=1, act="lrelu"
-        )
-
-    def forward(self, x):
-        out = self.layer2(self.layer1(x))
-        return x + out
 
 
 class SPPBottleneck(nn.Module):
