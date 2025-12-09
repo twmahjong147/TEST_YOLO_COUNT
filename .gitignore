@@ -3,4 +3,5 @@ logs/
 sample/
 __pycache__/
 benchmark/
+.DS_Store
 
