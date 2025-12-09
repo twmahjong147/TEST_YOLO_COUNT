@@ -146,6 +146,104 @@ class TinyCLIPClassifier:
         return image_features.cpu().numpy()[0]
 
 
+def calculate_iou(box1, box2):
+    """
+    Calculate Intersection over Union (IoU) between two bounding boxes.
+    
+    Args:
+        box1: [x1, y1, x2, y2]
+        box2: [x1, y1, x2, y2]
+    
+    Returns:
+        IoU value (0-1)
+    """
+    x1_inter = max(box1[0], box2[0])
+    y1_inter = max(box1[1], box2[1])
+    x2_inter = min(box1[2], box2[2])
+    y2_inter = min(box1[3], box2[3])
+    
+    if x2_inter <= x1_inter or y2_inter <= y1_inter:
+        return 0.0
+    
+    inter_area = (x2_inter - x1_inter) * (y2_inter - y1_inter)
+    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    union_area = box1_area + box2_area - inter_area
+    
+    return inter_area / union_area if union_area > 0 else 0.0
+
+
+def filter_contained_across(detections, iou_threshold=0.5):
+    """
+    Merge detections that are geometrically too close (high IoU).
+    Keep the detection with higher confidence.
+    
+    Args:
+        detections: List of detection dictionaries with 'bbox' and 'confidence'
+        iou_threshold: IoU threshold for merging (default: 0.5)
+    
+    Returns:
+        List of filtered detections
+    """
+    if len(detections) <= 1:
+        return detections
+    
+    # Sort by confidence (descending)
+    sorted_dets = sorted(detections, key=lambda x: x['confidence'], reverse=True)
+    
+    keep = []
+    suppressed = set()
+    
+    for i, det1 in enumerate(sorted_dets):
+        if i in suppressed:
+            continue
+        
+        keep.append(det1)
+        
+        # Check against remaining detections
+        for j in range(i + 1, len(sorted_dets)):
+            if j in suppressed:
+                continue
+            
+            det2 = sorted_dets[j]
+            iou = calculate_iou(det1['bbox'], det2['bbox'])
+            
+            if iou > iou_threshold:
+                suppressed.add(j)
+    
+    return keep
+
+
+def filter_by_area_consistency(crops_list, area_variance_threshold=2.0):
+    """
+    Filter crops by area consistency to avoid grouping very different sizes.
+    Removes crops whose area is too different from the median.
+    
+    Args:
+        crops_list: List of crop dictionaries with 'area' field
+        area_variance_threshold: Standard deviations from median to keep (default: 2.0)
+    
+    Returns:
+        Filtered list of crops
+    """
+    if len(crops_list) <= 2:
+        return crops_list
+    
+    areas = np.array([c['area'] for c in crops_list])
+    median_area = np.median(areas)
+    std_area = np.std(areas)
+    
+    if std_area == 0:
+        return crops_list
+    
+    min_area = median_area - area_variance_threshold * std_area
+    max_area = median_area + area_variance_threshold * std_area
+    
+    filtered = [c for c in crops_list if min_area <= c['area'] <= max_area]
+    
+    return filtered
+
+
 def cluster_by_similarity(embeddings, similarity_threshold=0.80):
     """
     Cluster embeddings based on cosine similarity.
@@ -335,7 +433,7 @@ def visualize_detections_custom(img, detections, main_class=None):
     return vis_img
 
 
-def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir='output', outlier_threshold=3.0, method='classification', similarity_threshold=0.80, aspect_ratio_min=0.45, aspect_ratio_max=2.2, **kwargs):
+def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir='output', outlier_threshold=3.0, method='classification', similarity_threshold=0.80, aspect_ratio_min=0.45, aspect_ratio_max=2.2, area_variance_threshold=2.0, iou_threshold=0.5, **kwargs):
     """
     Count objects in an image using YOLOX-S detection and TinyCLIP classification or similarity clustering.
     
@@ -365,6 +463,8 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
         similarity_threshold: Cosine similarity threshold for clustering (0-1)
         aspect_ratio_min: Minimum width/height ratio for aspect ratio filtering
         aspect_ratio_max: Maximum width/height ratio for aspect ratio filtering
+        area_variance_threshold: Standard deviations from median for area consistency filtering
+        iou_threshold: IoU threshold for merging overlapping detections (0-1)
     
     Returns:
         Dictionary containing counting results and statistics
@@ -539,6 +639,16 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
         if method == 'similarity':
             # Similarity-based clustering
             print(f"\n🔍 Extracting embeddings for {len(crops_list)} crops...")
+            
+            # Apply area-based filtering before clustering
+            n_before_area_filter = len(crops_list)
+            crops_list = filter_by_area_consistency(crops_list, area_variance_threshold=area_variance_threshold)
+            n_after_area_filter = len(crops_list)
+            
+            if n_before_area_filter > n_after_area_filter:
+                print(f"  Removed {n_before_area_filter - n_after_area_filter} crops with inconsistent areas")
+                print(f"  Kept {n_after_area_filter} crops for embedding extraction")
+            
             embeddings = []
             for item in crops_list:
                 embedding = classifier.get_visual_embedding(item['crop'])
@@ -596,6 +706,21 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
                     'cluster_id': int(cluster_id),
                     'is_main_cluster': is_main
                 })
+            
+            # Apply IoU-based filtering to merge overlapping detections
+            n_before_iou = len(all_detections)
+            all_detections = filter_contained_across(all_detections, iou_threshold=iou_threshold)
+            n_after_iou = len(all_detections)
+            
+            if n_before_iou > n_after_iou:
+                print(f"\n🔗 IoU filtering: Merged {n_before_iou - n_after_iou} overlapping detections")
+                print(f"  Kept {n_after_iou} unique detections")
+                
+                # Recalculate cluster counts after IoU filtering
+                cluster_counts_after_iou = Counter([d['cluster_id'] for d in all_detections])
+                largest_cluster_id = max(cluster_counts_after_iou, key=cluster_counts_after_iou.get)
+                main_count = cluster_counts_after_iou[largest_cluster_id]
+                cluster_counts = dict(cluster_counts_after_iou)
 
         else:
             # Classification-based method
@@ -638,6 +763,15 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
                     print(f"  Progress: {idx+1}/{len(crops_list)} detections classified")
 
             print(f"✓ Classification complete!")
+            
+            # Apply IoU-based filtering to merge overlapping detections
+            n_before_iou = len(all_detections)
+            all_detections = filter_contained_across(all_detections, iou_threshold=iou_threshold)
+            n_after_iou = len(all_detections)
+            
+            if n_before_iou > n_after_iou:
+                print(f"\n🔗 IoU filtering: Merged {n_before_iou - n_after_iou} overlapping detections")
+                print(f"  Kept {n_after_iou} unique detections")
 
         # Count by class
         class_counts = Counter([d['class'] for d in all_detections])
@@ -970,6 +1104,20 @@ Requirements:
         help='Maximum width/height ratio for aspect ratio filtering (default: 2.2)'
     )
 
+    parser.add_argument(
+        '--area-variance-threshold',
+        type=float,
+        default=2.0,
+        help='Area variance threshold for crop size consistency filtering (default: 2.0, standard deviations from median)'
+    )
+
+    parser.add_argument(
+        '--iou-threshold',
+        type=float,
+        default=0.5,
+        help='IoU threshold for merging overlapping detections (default: 0.5, higher = more aggressive merging)'
+    )
+
     args = parser.parse_args()
 
     # Validate image path
@@ -998,6 +1146,8 @@ Requirements:
             similarity_threshold=args.similarity_threshold,
             aspect_ratio_min=args.aspect_ratio_min,
             aspect_ratio_max=args.aspect_ratio_max,
+            area_variance_threshold=args.area_variance_threshold,
+            iou_threshold=args.iou_threshold,
             **kwargs
         )
 
