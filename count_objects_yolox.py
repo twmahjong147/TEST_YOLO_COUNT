@@ -61,13 +61,29 @@ from yolox.utils import postprocess
 class TinyCLIPEmbedder:
     """Visual embedding extractor using TinyCLIP."""
     
-    def __init__(self, model_name='wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M'):
-        """Initialize TinyCLIP model."""
-        print(f"\n📦 Loading TinyCLIP model: {model_name}")
-        self.model = CLIPModel.from_pretrained(model_name)
-        self.processor = CLIPProcessor.from_pretrained(model_name)
+    def __init__(self, model_path='weights/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M'):
+        """
+        Initialize TinyCLIP model.
+        
+        Args:
+            model_path: Path to local TinyCLIP model directory (default: 'weights/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M')
+                       Can also be a HuggingFace model name (e.g., 'wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M')
+        """
+        print(f"\n📦 Loading TinyCLIP model from: {model_path}")
+        
+        # Check if it's a local path
+        if os.path.exists(model_path):
+            print(f"  Loading from local directory...")
+            self.model = CLIPModel.from_pretrained(model_path, local_files_only=True)
+            self.processor = CLIPProcessor.from_pretrained(model_path, local_files_only=True)
+        else:
+            print(f"  Local path not found, downloading from HuggingFace...")
+            self.model = CLIPModel.from_pretrained(model_path)
+            self.processor = CLIPProcessor.from_pretrained(model_path)
+        
         self.model.eval()
         print(f"✓ TinyCLIP model loaded successfully")
+        print(f"  Model path: {model_path}")
         print(f"  Parameters: 8M (Vision) + 3M (Text)")
         print(f"  Training dataset: YFCC15M")
     
@@ -161,14 +177,14 @@ def filter_contained_across(detections, iou_threshold=0.5):
     return keep
 
 
-def filter_by_area_consistency(crops_list, area_variance_threshold=2.0):
+def filter_by_area_consistency(crops_list, area_variance_threshold=1.0):
     """
     Filter crops by area consistency to avoid grouping very different sizes.
     Removes crops whose area is too different from the median.
     
     Args:
         crops_list: List of crop dictionaries with 'area' field
-        area_variance_threshold: Standard deviations from median to keep (default: 2.0)
+        area_variance_threshold: Standard deviations from median to keep (default: 1.0)
     
     Returns:
         Filtered list of crops
@@ -257,35 +273,56 @@ def remove_size_outliers(boxes, std_threshold=3.0):
     return keep
 
 
-def remove_aspect_ratio_outliers(boxes, min_ratio: float = 0.45, max_ratio: float = 2.2) -> list:
+def remove_aspect_ratio_outliers(boxes, aspect_ratio_variance_threshold: float = 1.0) -> list:
     """
-    Remove boxes with unusual aspect ratios.
-
-    Most objects like blueberries are roughly square. This filter removes
-    boxes that are too elongated (likely false positives from shadows/gaps).
+    Filter crops by aspect ratio consistency to avoid grouping very different aspect ratios.
+    
+    Removes boxes whose aspect ratio is too different from the median aspect ratio.
 
     Args:
         boxes: Tensor or array of shape (N, 4) with bounding boxes [x1, y1, x2, y2]
-        min_ratio: Minimum width/height ratio
-        max_ratio: Maximum width/height ratio
+        aspect_ratio_variance_threshold: Standard deviations from median to keep (default: 1.0)
 
     Returns:
         List of indices to keep
     """
     if len(boxes) == 0:
         return []
+    
+    if len(boxes) <= 2:
+        return list(range(len(boxes)))
 
     if not isinstance(boxes, torch.Tensor):
         boxes = torch.tensor(boxes)
 
+    # Calculate aspect ratios for all boxes
+    widths = boxes[:, 2] - boxes[:, 0]
+    heights = boxes[:, 3] - boxes[:, 1]
+    
+    # Avoid division by zero
+    valid_mask = heights > 0
+    if not valid_mask.any():
+        return []
+    
+    aspect_ratios = np.zeros(len(boxes))
+    aspect_ratios[valid_mask.numpy()] = (widths[valid_mask] / heights[valid_mask]).numpy()
+    
+    # Calculate median and std of aspect ratios
+    valid_ratios = aspect_ratios[valid_mask.numpy()]
+    median_ratio = np.median(valid_ratios)
+    std_ratio = np.std(valid_ratios)
+    
+    if std_ratio == 0:
+        return list(range(len(boxes)))
+    
+    # Keep boxes within threshold standard deviations from median
+    min_ratio = median_ratio - aspect_ratio_variance_threshold * std_ratio
+    max_ratio = median_ratio + aspect_ratio_variance_threshold * std_ratio
+    
     keep = []
-    for i, box in enumerate(boxes):
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        if height > 0:
-            ratio = width / height
-            if min_ratio <= ratio <= max_ratio:
-                keep.append(i)
+    for i, ratio in enumerate(aspect_ratios):
+        if valid_mask[i] and min_ratio <= ratio <= max_ratio:
+            keep.append(i)
 
     return keep
 
@@ -342,7 +379,7 @@ def visualize_detections_custom(img, detections, main_class=None):
     return vis_img
 
 
-def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier_threshold=3.0, similarity_threshold=0.80, aspect_ratio_min=0.45, aspect_ratio_max=2.2, area_variance_threshold=2.0, iou_threshold=0.5, **kwargs):
+def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier_threshold=3.0, similarity_threshold=0.80, aspect_ratio_variance_threshold=1.0, area_variance_threshold=2.0, iou_threshold=0.5, **kwargs):
     """
     Count objects in an image using YOLOX-S detection and TinyCLIP similarity clustering.
     
@@ -356,29 +393,41 @@ def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier
     
     Args:
         img_path: Path to the input image
-        weight_path: Path to YOLOX-S model weights
+        weight_path: Path to YOLOX model weights
         output_dir: Directory to save visualization
         outlier_threshold: Standard deviations from median for outlier removal (0 to disable)
         similarity_threshold: Cosine similarity threshold for clustering (0-1)
-        aspect_ratio_min: Minimum width/height ratio for aspect ratio filtering
-        aspect_ratio_max: Maximum width/height ratio for aspect ratio filtering
+        aspect_ratio_variance_threshold: Standard deviations from median for aspect ratio consistency filtering (default: 1.0)
         area_variance_threshold: Standard deviations from median for area consistency filtering
         iou_threshold: IoU threshold for merging overlapping detections (0-1)
     
     Returns:
         Dictionary containing counting results and statistics
     """
-    model_name = 'yolox_s'
-    input_size = (640, 640)
+    # Automatically detect model type from weight path
+    weight_basename = os.path.basename(weight_path)
+    if 'nano' in weight_basename.lower():
+        model_name = 'yolox_nano'
+        input_size = (416, 416)
+    elif 'tiny' in weight_basename.lower():
+        model_name = 'yolox_tiny'
+        input_size = (416, 416)
+    elif 'yolox_s' in weight_basename.lower() or weight_basename == 'yolox_s.pth':
+        model_name = 'yolox_s'
+        input_size = (640, 640)
+    else:
+        # Default to yolox_s if not recognized
+        model_name = 'yolox_s'
+        input_size = (640, 640)
 
     print(f"\n{'='*70}")
-    print(f"YOLOX-S + TinyCLIP SIMILARITY CLUSTERING")
+    print(f"{model_name.upper().replace('_', '-')} + TinyCLIP SIMILARITY CLUSTERING")
     print(f"{'='*70}")
     print(f"\n🔬 Processing Pipeline:")
     print(f"  Stage 1: Object Detection (YOLOX)")
     if outlier_threshold > 0:
         print(f"  Stage 1.5: Size Outlier Filtering ({outlier_threshold} std)")
-        print(f"  Stage 1.6: Aspect Ratio Filtering ({aspect_ratio_min}-{aspect_ratio_max})")
+        print(f"  Stage 1.6: Aspect Ratio Consistency Filtering ({aspect_ratio_variance_threshold} std)")
     print(f"  Stage 2: Area Consistency + Visual Embeddings")
     print(f"  Stage 3: Similarity Clustering (threshold={similarity_threshold})")
     print(f"  Stage 4: IoU Merging + Result Generation")
@@ -398,7 +447,7 @@ def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier
     print(f"\n{'='*70}")
     print(f"STAGE 1: OBJECT DETECTION")
     print(f"{'='*70}")
-    print(f"\n📦 Loading YOLOX-S model...")
+    print(f"\n📦 Loading {model_name.upper().replace('_', '-')} model...")
     exp = get_exp(f'official_yolox/exps/default/{model_name}.py', None)
     model = exp.get_model()
     ckpt = torch.load(weight_path, map_location='cpu')
@@ -470,10 +519,10 @@ def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier
             print(f"\n⚠️  Outlier filtering disabled")
         
         # Stage 1.6: Remove aspect ratio outliers
-        print(f"\n🔍 Filtering aspect ratio outliers (ratio range: {aspect_ratio_min:.2f} - {aspect_ratio_max:.2f})...")
+        print(f"\n🔍 Filtering aspect ratio outliers (variance threshold: {aspect_ratio_variance_threshold} std)...")
         n_before_aspect = n
         boxes = output[:, :4]
-        keep_indices_aspect = remove_aspect_ratio_outliers(boxes, min_ratio=aspect_ratio_min, max_ratio=aspect_ratio_max)
+        keep_indices_aspect = remove_aspect_ratio_outliers(boxes, aspect_ratio_variance_threshold=aspect_ratio_variance_threshold)
         output = output[keep_indices_aspect]
         n = len(output)
         n_removed_aspect = n_before_aspect - n
@@ -801,7 +850,7 @@ def main():
 Processing Pipeline:
   Stage 1: Object Detection (YOLOX - class-agnostic)
   Stage 1.5: Size Outlier Filtering (removes boxes too small/large)
-  Stage 1.6: Aspect Ratio Filtering (removes unusual shapes)
+  Stage 1.6: Aspect Ratio Consistency Filtering (removes inconsistent aspect ratios)
   Stage 2: Area Consistency + Visual Embeddings (TinyCLIP)
   Stage 3: Similarity Clustering + IoU Merging
   Stage 4: Count Largest Cluster + Result Generation
@@ -818,6 +867,9 @@ Examples:
   
   # Adjust outlier filtering
   python3 count_objects_yolox.py --image sample1.JPG --outlier-threshold 2.0
+  
+  # Custom aspect ratio variance threshold
+  python3 count_objects_yolox.py --image sample1.JPG --aspect-ratio-variance-threshold 1.5
   
   # Custom area variance threshold
   python3 count_objects_yolox.py --image sample1.JPG --area-variance-threshold 1.5
@@ -879,17 +931,10 @@ Requirements:
     )
 
     parser.add_argument(
-        '--aspect-ratio-min',
+        '--aspect-ratio-variance-threshold',
         type=float,
-        default=0.45,
-        help='Minimum width/height ratio for aspect ratio filtering (default: 0.45)'
-    )
-
-    parser.add_argument(
-        '--aspect-ratio-max',
-        type=float,
-        default=2.2,
-        help='Maximum width/height ratio for aspect ratio filtering (default: 2.2)'
+        default=1.0,
+        help='Aspect ratio variance threshold for consistency filtering (default: 1.0, standard deviations from median)'
     )
 
     parser.add_argument(
@@ -930,8 +975,7 @@ Requirements:
             output_dir,
             args.outlier_threshold,
             similarity_threshold=args.similarity_threshold,
-            aspect_ratio_min=args.aspect_ratio_min,
-            aspect_ratio_max=args.aspect_ratio_max,
+            aspect_ratio_variance_threshold=args.aspect_ratio_variance_threshold,
             area_variance_threshold=args.area_variance_threshold,
             iou_threshold=args.iou_threshold,
             **kwargs
