@@ -118,7 +118,9 @@ class TinyCLIPClassifier:
         best_idx = probs.argmax().item()
         best_label = vocabulary[best_idx]
         confidence = probs[best_idx].item()
-        
+        if best_idx == 54:
+            print(f"   🏆 Best Match: {best_label} (confidence: {confidence:.3f})")
+            
         return best_label, confidence, probs.cpu().numpy()
 
 
@@ -251,7 +253,7 @@ def visualize_detections_custom(img, detections, main_class=None):
     return vis_img
 
 
-def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir='output', outlier_threshold=3.0):
+def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir='output', outlier_threshold=3.0, **kwargs):
     """
     Count objects in an image using YOLOX-S detection and TinyCLIP classification.
     
@@ -321,11 +323,15 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
     model.load_state_dict(ckpt['model'])
     model.eval()
     
+    # Override thresholds if provided
+    conf_thresh = kwargs.get('conf_threshold', exp.test_conf)
+    nms_thresh = kwargs.get('nms_threshold', exp.nmsthre)
+    
     print(f"✓ Model loaded successfully")
     print(f"  Model: {model_name.upper()}")
     print(f"  Input size: {input_size}")
-    print(f"  Confidence threshold: {exp.test_conf}")
-    print(f"  NMS threshold: {exp.nmsthre}")
+    print(f"  Confidence threshold: {conf_thresh}")
+    print(f"  NMS threshold: {nms_thresh}")
     
     # Load image
     print(f"\n📷 Loading image: {img_path}")
@@ -350,7 +356,7 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
     start_time = time.time()
     with torch.no_grad():
         outputs = model(img_tensor)
-        outputs = postprocess(outputs, 80, exp.test_conf, exp.nmsthre, class_agnostic=True)
+        outputs = postprocess(outputs, 80, conf_thresh, nms_thresh, class_agnostic=True)
     inference_time = time.time() - start_time
     
     print(f"⏱️  Inference time: {inference_time*1000:.2f}ms")
@@ -404,6 +410,28 @@ def count_objects_with_yolox(img_path, weight_path, vocabulary=None, output_dir=
             
             # Classify using TinyCLIP
             cls_name, cls_conf, probs = classifier.classify_crop(crop, vocabulary)
+            
+            # DEBUG: Save crop with class name and confidence
+            debug_crop = crop.copy()
+            text = f"{cls_name} {cls_conf:.2f}"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 1
+            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+            
+            # Add white background for text at bottom
+            text_height = text_size[1] + 10
+            debug_crop_with_text = np.ones((debug_crop.shape[0] + text_height, debug_crop.shape[1], 3), dtype=np.uint8) * 255
+            debug_crop_with_text[:debug_crop.shape[0], :] = debug_crop
+            
+            # Draw text at bottom center
+            text_x = (debug_crop.shape[1] - text_size[0]) // 2
+            text_y = debug_crop.shape[0] + text_size[1] + 5
+            cv2.putText(debug_crop_with_text, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness)
+            
+            # Save debug crop
+            os.makedirs('output/debug_crops', exist_ok=True)
+            cv2.imwrite(f'output/debug_crops/crop_{i:03d}.jpg', debug_crop_with_text)
             
             # Calculate area
             area = (x2 - x1) * (y2 - y1)
@@ -684,6 +712,20 @@ Requirements:
         help='Standard deviations from median for size outlier removal (default: 3.0, use 0 to disable)'
     )
     
+    parser.add_argument(
+        '--conf-threshold',
+        type=float,
+        default=None,
+        help='Confidence threshold for object detection (default: 0.01, higher = fewer detections)'
+    )
+    
+    parser.add_argument(
+        '--nms-threshold',
+        type=float,
+        default=None,
+        help='NMS (Non-Maximum Suppression) threshold (default: 0.65, higher = more overlapping boxes kept)'
+    )
+    
     args = parser.parse_args()
     
     # Validate image path
@@ -696,12 +738,19 @@ Requirements:
     
     # Run counting
     try:
+        kwargs = {}
+        if args.conf_threshold is not None:
+            kwargs['conf_threshold'] = args.conf_threshold
+        if args.nms_threshold is not None:
+            kwargs['nms_threshold'] = args.nms_threshold
+            
         result = count_objects_with_yolox(
             args.image, 
             args.weights, 
             args.vocabulary, 
             output_dir,
-            args.outlier_threshold
+            args.outlier_threshold,
+            **kwargs
         )
         
         if result is None:
