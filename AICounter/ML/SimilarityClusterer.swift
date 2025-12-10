@@ -3,6 +3,8 @@ import Foundation
 enum SimilarityClusterer {
     static func cluster(
         embeddings: [[Float]],
+        colorHistograms: [[Float]]? = nil,
+        histogramWeight: Float = 0.0,
         similarityThreshold: Float = 0.80
     ) -> [Int] {
         guard embeddings.count > 1 else {
@@ -22,7 +24,9 @@ enum SimilarityClusterer {
                     let distance = averageLinkageDistance(
                         cluster1: clusters[i],
                         cluster2: clusters[j],
-                        embeddings: embeddings
+                        embeddings: embeddings,
+                        colorHistograms: colorHistograms,
+                        histogramWeight: histogramWeight
                     )
                     
                     if distance < minDistance {
@@ -54,15 +58,24 @@ enum SimilarityClusterer {
     private static func averageLinkageDistance(
         cluster1: [Int],
         cluster2: [Int],
-        embeddings: [[Float]]
+        embeddings: [[Float]],
+        colorHistograms: [[Float]]?,
+        histogramWeight: Float
     ) -> Float {
         var totalDistance: Float = 0
         var count = 0
         
         for i in cluster1 {
             for j in cluster2 {
-                let similarity = StatisticsHelper.cosineSimilarity(embeddings[i], embeddings[j])
-                let distance = 1.0 - similarity
+                let embSim = StatisticsHelper.cosineSimilarity(embeddings[i], embeddings[j])
+                var combinedSim = embSim
+
+                if let histograms = colorHistograms, histogramWeight > 0.0, i < histograms.count, j < histograms.count {
+                    let histSim = StatisticsHelper.cosineSimilarity(histograms[i], histograms[j])
+                    combinedSim = (1.0 - histogramWeight) * embSim + histogramWeight * histSim
+                }
+
+                let distance = 1.0 - combinedSim
                 totalDistance += distance
                 count += 1
             }

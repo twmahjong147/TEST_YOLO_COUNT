@@ -45,6 +45,7 @@ final class AICounter {
         }
         
         var embeddings: [[Float]] = []
+        var histograms: [[Float]] = []
         var validDetections: [Detection] = []
         
         for detection in detections {
@@ -52,6 +53,9 @@ final class AICounter {
                 do {
                     let embedding = try embedder.getEmbedding(for: crop)
                     embeddings.append(embedding)
+                    // compute color histogram for the crop (L2-normalised)
+                    let hist = ImageProcessor.colorHistogram(crop)
+                    histograms.append(hist)
                     validDetections.append(detection)
                 } catch {
                     continue
@@ -67,6 +71,8 @@ final class AICounter {
         
         let clusterLabels = SimilarityClusterer.cluster(
             embeddings: embeddings,
+            colorHistograms: histograms,
+            histogramWeight: 0.20,
             similarityThreshold: similarityThreshold
         )
         
@@ -96,32 +102,32 @@ final class AICounter {
                                    isMainCluster: isMain)
             clusteredDetections.append(newDet)
             
-            // Save debug crop image with overlay text to debug_outputs (best-effort)
-            // if let cropCG = ImageProcessor.cropImage(image, to: det.bbox) {
-            //     let ui = UIImage(cgImage: cropCG)
-            //     let text = "Cluster \(clusterId)" + (isMain ? " (MAIN)" : "")
-            //     UIGraphicsBeginImageContextWithOptions(ui.size, false, ui.scale)
-            //     ui.draw(at: .zero)
-            //     let attrs: [NSAttributedString.Key: Any] = [
-            //         .font: UIFont.systemFont(ofSize: 12),
-            //         .foregroundColor: UIColor.white,
-            //         .backgroundColor: UIColor.black.withAlphaComponent(0.5)
-            //     ]
-            //     let textRect = CGRect(x: 4, y: 4, width: ui.size.width - 8, height: 20)
-            //     text.draw(in: textRect, withAttributes: attrs)
-            //     let annotated = UIGraphicsGetImageFromCurrentImageContext()
-            //     UIGraphicsEndImageContext()
-            //     if let annotated = annotated, let data = annotated.jpegData(compressionQuality: 0.9) {
-            //         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            //         if let docs = docs {
-            //             let debugDir = docs.appendingPathComponent("debug_outputs")
-            //             try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
-            //             let fname = "crop_\(idx)_cluster_\(clusterId)_\(Int(Date().timeIntervalSince1970)).jpg"
-            //             let url = debugDir.appendingPathComponent(fname)
-            //             try? data.write(to: url)
-            //         }
-            //     }
-            // }
+            // Save debug crop image with overlay text to debug_outputs (best-effort)            
+            if let cropCG = ImageProcessor.cropImage(image, to: det.bbox), isMain {
+                let ui = UIImage(cgImage: cropCG)
+                let text = "Cluster \(clusterId)" + (isMain ? " (MAIN)" : "")
+                UIGraphicsBeginImageContextWithOptions(ui.size, false, ui.scale)
+                ui.draw(at: .zero)
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 12),
+                    .foregroundColor: UIColor.white,
+                    .backgroundColor: UIColor.black.withAlphaComponent(0.5)
+                ]
+                let textRect = CGRect(x: 4, y: 4, width: ui.size.width - 8, height: 20)
+                text.draw(in: textRect, withAttributes: attrs)
+                let annotated = UIGraphicsGetImageFromCurrentImageContext()
+                UIGraphicsEndImageContext()
+                if let annotated = annotated, let data = annotated.jpegData(compressionQuality: 0.9) {
+                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                    if let docs = docs {
+                        let debugDir = docs.appendingPathComponent("debug_outputs")
+                        try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+                        let fname = "crop_\(idx)_cluster_\(clusterId)_\(Int(Date().timeIntervalSince1970)).jpg"
+                        let url = debugDir.appendingPathComponent(fname)
+                        try? data.write(to: url)
+                    }
+                }
+            }
         }
         
         let processingTime = Date().timeIntervalSince(startTime)

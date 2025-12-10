@@ -197,6 +197,75 @@ enum ImageProcessor {
         
         return image.cropping(to: adjustedRect)
     }
+
+    static func colorHistogram(_ image: CGImage, binsPerChannel: Int = 16) -> [Float] {
+        let bins = max(1, binsPerChannel)
+        var counts = [Float](repeating: 0, count: 3 * bins)
+
+        guard let dataProvider = image.dataProvider,
+              let data = dataProvider.data,
+              let ptr = CFDataGetBytePtr(data) else {
+            return counts
+        }
+
+        let width = image.width
+        let height = image.height
+        let bitmapInfo = image.bitmapInfo
+        let alphaInfoRaw = bitmapInfo.rawValue & CGBitmapInfo.alphaInfoMask.rawValue
+        let alphaInfo = CGImageAlphaInfo(rawValue: alphaInfoRaw) ?? .none
+        let isLittleEndian = bitmapInfo.contains(.byteOrder32Little)
+
+        var rIndex = 2
+        var gIndex = 1
+        var bIndex = 0
+
+        if isLittleEndian {
+            if alphaInfo == .premultipliedFirst || alphaInfo == .noneSkipFirst || alphaInfo == .first {
+                bIndex = 0; gIndex = 1; rIndex = 2
+            } else {
+                rIndex = 0; gIndex = 1; bIndex = 2
+            }
+        } else {
+            if alphaInfo == .premultipliedFirst || alphaInfo == .first {
+                rIndex = 1; gIndex = 2; bIndex = 3
+            } else {
+                rIndex = 0; gIndex = 1; bIndex = 2
+            }
+        }
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let pixel = ((y * width) + x) * 4
+                let r = ptr[pixel + rIndex]
+                let g = ptr[pixel + gIndex]
+                let b = ptr[pixel + bIndex]
+
+                let rBin = Int((Float(r) / 255.0) * Float(bins))
+                let gBin = Int((Float(g) / 255.0) * Float(bins))
+                let bBin = Int((Float(b) / 255.0) * Float(bins))
+
+                let rIdx = min(bins - 1, max(0, rBin))
+                let gIdx = min(bins - 1, max(0, gBin))
+                let bIdx = min(bins - 1, max(0, bBin))
+
+                counts[0 * bins + rIdx] += 1
+                counts[1 * bins + gIdx] += 1
+                counts[2 * bins + bIdx] += 1
+            }
+        }
+
+        // Normalize to unit length (L2)
+        var sumSquares: Float = 0
+        vDSP_svesq(counts, 1, &sumSquares, vDSP_Length(counts.count))
+        let norm = sqrt(sumSquares)
+        if norm > 0 {
+            var inv = 1.0 / norm
+            var out = counts
+            vDSP_vsmul(counts, 1, &inv, &out, 1, vDSP_Length(counts.count))
+            return out
+        }
+        return counts
+    }
     
     static func normalizeEmbedding(_ vector: [Float]) -> [Float] {
         var result = vector
