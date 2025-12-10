@@ -35,7 +35,7 @@ def convert_yolox_to_coreml(weight_path='weights/yolox_s.pth',
         input_size: Input image size (height, width)
     """
     print("\n" + "="*70)
-    print("CONVERTING YOLOX-S TO CORE ML")
+    print("CONVERTING YOLOX TO CORE ML")
     print("="*70)
     
     # Detect model type from weight path
@@ -46,6 +46,9 @@ def convert_yolox_to_coreml(weight_path='weights/yolox_s.pth',
     elif 'tiny' in weight_basename.lower():
         model_name = 'yolox_tiny'
         input_size = (416, 416)
+    elif 'yolox_l' in weight_basename.lower() or weight_basename == 'yolox_l.pth':
+        model_name = 'yolox_l'
+        input_size = (640, 640)
     elif 'yolox_s' in weight_basename.lower() or weight_basename == 'yolox_s.pth':
         model_name = 'yolox_s'
         input_size = (640, 640)
@@ -267,8 +270,8 @@ def main():
     # Convert YOLOX
     try:
         yolox_model, yolox_path = convert_yolox_to_coreml(
-            weight_path='weights/yolox_s.pth',
-            output_path='weights/yolox_s.mlpackage'
+            weight_path='weights/yolox_l.pth',
+            output_path='weights/yolox_l.mlpackage'
         )
         print("\n✅ YOLOX conversion completed successfully!")
     except Exception as e:

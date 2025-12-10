@@ -15,7 +15,7 @@ struct ContentView: View {
     @State private var aiCounter = AICounter()
     @State private var historyManager = HistoryManager()
     
-    private let confidenceThreshold: Float = 0.001
+    private let confidenceThreshold: Float = 0.0001
     private let nmsThreshold: Float  = 0.65
     private let similarityThreshold: Float = 0.80
     
@@ -171,6 +171,9 @@ struct ContentView: View {
         }
 
         for det in result.detections {
+            if (!det.isMainCluster) {
+                continue
+            }
             let rect = det.bbox
             let clusterId = det.clusterId ?? -1
             let isMain = det.isMainCluster

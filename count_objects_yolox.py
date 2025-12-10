@@ -412,6 +412,9 @@ def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier
     elif 'tiny' in weight_basename.lower():
         model_name = 'yolox_tiny'
         input_size = (416, 416)
+    elif 'yolox_l' in weight_basename.lower() or weight_basename == 'yolox_l.pth':
+        model_name = 'yolox_l'
+        input_size = (640, 640)
     elif 'yolox_s' in weight_basename.lower() or weight_basename == 'yolox_s.pth':
         model_name = 'yolox_s'
         input_size = (640, 640)
@@ -435,9 +438,9 @@ def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier
     # Check if weight file exists
     if not os.path.exists(weight_path):
         print(f"❌ Error: Weight file not found: {weight_path}")
-        print(f"\nPlease download YOLOX-S weights:")
-        print(f"  wget https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth")
-        print(f"  mv yolox_s.pth weights/")
+        print(f"\nPlease download weights for {model_name.upper()}:")
+        print(f"  Visit https://github.com/Megvii-BaseDetection/YOLOX/releases/ and download the appropriate .pth (e.g., {model_name}.pth)")
+        print(f"  Place the file in the weights/ directory")
         return None
 
     # Initialize TinyCLIP embedder
@@ -740,7 +743,7 @@ def count_objects_with_yolox(img_path, weight_path, output_dir='output', outlier
             f.write("  Stage 4: Result Generation\n\n")
             f.write(f"Image: {img_path}\n")
             f.write(f"Image size: {w}×{h} pixels\n")
-            f.write(f"Model: YOLOX-S\n")
+            f.write(f"Model: {model_name.upper()}\n")
             f.write(f"Method: SIMILARITY CLUSTERING\n")
             f.write(f"Similarity Threshold: {similarity_threshold}\n")
             f.write(f"IoU Threshold: {iou_threshold}\n")

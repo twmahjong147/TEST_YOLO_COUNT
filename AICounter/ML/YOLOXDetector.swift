@@ -12,17 +12,17 @@ final class YOLOXDetector {
         var modelURL: URL?
 
         // Try .mlmodelc (compiled model)
-        if let compiledURL = Bundle.main.url(forResource: "yolox_s", withExtension: "mlmodelc") {
+        if let compiledURL = Bundle.main.url(forResource: "yolox_l", withExtension: "mlmodelc") {
             modelURL = compiledURL
         }
         // Try .mlpackage as fallback
-        else if let packageURL = Bundle.main.url(forResource: "yolox_s", withExtension: "mlpackage")
+        else if let packageURL = Bundle.main.url(forResource: "yolox_l", withExtension: "mlpackage")
         {
             modelURL = packageURL
         }
         // Try direct resource lookup
         else if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent(
-            "yolox_s.mlmodelc")
+            "yolox_l.mlmodelc")
         {
             if FileManager.default.fileExists(atPath: resourceURL.path) {
                 modelURL = resourceURL
@@ -31,7 +31,7 @@ final class YOLOXDetector {
 
         guard let modelURL = modelURL else {
             let bundlePath = Bundle.main.bundlePath
-            throw ProcessingError.modelNotFound("yolox_s model not found in bundle: \(bundlePath)")
+            throw ProcessingError.modelNotFound("yolox_l model not found in bundle: \(bundlePath)")
         }
 
         let config = MLModelConfiguration()
@@ -40,7 +40,7 @@ final class YOLOXDetector {
         do {
             model = try await MLModel.load(contentsOf: modelURL, configuration: config)
         } catch {
-            throw ProcessingError.modelLoadFailed("yolox_s: \(error.localizedDescription)")
+            throw ProcessingError.modelLoadFailed("yolox_l: \(error.localizedDescription)")
         }
     }
 
@@ -71,7 +71,7 @@ final class YOLOXDetector {
         let prediction = try model.prediction(from: input)
 
         // Extract output multiarray and run postprocess (matches official YOLOX postprocess)
-        guard let outputValue = prediction.featureValue(for: "var_1430"),
+        guard let outputValue = prediction.featureValue(for: "var_2188"), //"var_1430"),
               let multiArray = outputValue.multiArrayValue
         else {
             throw ProcessingError.predictionFailed("Failed to get output from model")
