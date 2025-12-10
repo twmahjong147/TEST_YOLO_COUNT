@@ -60,8 +60,8 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
-output/
-logs/
-.cursor/
-**/__pycache__/
 .DS_Store
+logs/
+output/
+**/__pycache__/
+debug_outputs/

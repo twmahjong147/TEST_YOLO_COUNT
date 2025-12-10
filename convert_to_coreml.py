@@ -85,12 +85,10 @@ def convert_yolox_to_coreml(weight_path='weights/yolox_s.pth',
     print(f"  This may take a few minutes...")
     
     # Define input
-    image_input = ct.ImageType(
+    image_input = ct.TensorType(
         name="image",
         shape=dummy_input.shape,
-        scale=1.0/255.0,  # Normalize from [0, 255] to [0, 1]
-        bias=[0, 0, 0],
-        color_layout=ct.colorlayout.RGB
+        dtype=float,
     )
     
     # Convert with traced model

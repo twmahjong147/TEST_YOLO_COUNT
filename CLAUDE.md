@@ -1,293 +1,735 @@
-# AICounter - iOS Migration Project
+# Project Overview
 
-**Last Updated:** 2025-12-09  
-**Project Status:** Specification & Planning Complete
+Last updated: 2025-12-09T17:59:03Z
 
----
+This is a native **iOS application** built with **Swift 6.1+** and **SwiftUI**. The codebase targets **iOS 18.0 and later**, allowing full use of modern Swift and iOS APIs. All concurrency is handled with **Swift Concurrency** (async/await, actors, @MainActor isolation) ensuring thread-safe code.
 
-## Project Overview
+- **Frameworks & Tech:** SwiftUI for UI, Swift Concurrency with strict mode, Swift Package Manager for modular architecture
+- **Architecture:** Model-View (MV) pattern using pure SwiftUI state management. We avoid MVVM and instead leverage SwiftUI's built-in state mechanisms (@State, @Observable, @Environment, @Binding)
+- **Testing:** Swift Testing framework with modern @Test macros and #expect/#require assertions
+- **Platform:** iOS (Simulator and Device)
+- **Accessibility:** Full accessibility support using SwiftUI's accessibility modifiers
 
-AICounter is an iOS application that migrates Python-based YOLOX object counting functionality to a native iOS app. The app uses computer vision and machine learning to count similar objects in images captured via camera or selected from the photo library.
+## Project Structure
 
-### Key Technologies
-- **Swift 5.9+** for iOS development
-- **CoreML** for on-device ML inference (YOLOX-S, TinyCLIP)
-- **AVFoundation** for camera capture
-- **Core Data** for counting history persistence
-- **SwiftUI** for modern iOS UI
+The project follows a **workspace + SPM package** architecture:
 
----
+```
+YourApp/
+├── Config/                         # XCConfig build settings
+│   ├── Debug.xcconfig
+│   ├── Release.xcconfig
+│   ├── Shared.xcconfig
+│   └── Tests.xcconfig
+├── YourApp.xcworkspace/            # Workspace container
+├── YourApp.xcodeproj/              # App shell (minimal wrapper)
+├── YourApp/                        # App target - just the entry point
+│   ├── Assets.xcassets/
+│   ├── YourAppApp.swift           # @main entry point only
+│   └── YourApp.xctestplan
+├── YourAppPackage/                 # All features and business logic
+│   ├── Package.swift
+│   ├── Sources/
+│   │   └── YourAppFeature/        # Feature modules
+│   └── Tests/
+│       └── YourAppFeatureTests/   # Swift Testing tests
+└── YourAppUITests/                 # UI automation tests
+```
 
-## Project Documents
+**Important:** All development work should be done in the **YourAppPackage** Swift Package, not in the app project. The app project is merely a thin wrapper that imports and launches the package features.
 
-### Product Requirements
-- **AICounter_PRD.md** - Complete product requirements document
-  - 8 features (4 MVP, 4 post-MVP)
-  - Detailed algorithm pseudocode from Python reference
-  - UI/UX specifications
-  - Performance requirements (<2s processing, <150MB memory)
-  - 11-week development roadmap
+# Code Quality & Style Guidelines
 
-### Python Reference Implementation
-- **count_objects_yolox.py** (1,007 lines) - Reference implementation
-  - YOLOX object detection
-  - TinyCLIP embedding extraction
-  - Similarity-based clustering
-  - Size/aspect ratio outlier filtering
-  - IoU-based detection merging
+## Swift Style & Conventions
 
-### Conversion Documentation
-- **COREML_CONVERSION_SUMMARY.md** - CoreML model conversion guide
-- **MODEL_SIZE_EXPLANATION.md** - Model size optimization details
-- **MODEL_TESTING_RESULTS.md** - Validation test results
-- **README_COREML.md** - CoreML integration instructions
-- **SWIFT_MIGRATION_GUIDE.md** - Swift migration guidelines
+- **Naming:** Use `UpperCamelCase` for types, `lowerCamelCase` for properties/functions. Choose descriptive names (e.g., `calculateMonthlyRevenue()` not `calcRev`)
+- **Value Types:** Prefer `struct` for models and data, use `class` only when reference semantics are required
+- **Enums:** Leverage Swift's powerful enums with associated values for state representation
+- **Early Returns:** Prefer early return pattern over nested conditionals to avoid pyramid of doom
 
-### Project Constitution
-- **.specify/memory/constitution.md** (v1.0.0, ratified 2025-12-09)
-  - **5 Core Principles:**
-    1. Code Quality (clean code, max 50 lines/function, max 3 nesting levels)
-    2. Testing Standards (80% coverage, TDD, performance tests)
-    3. UX Consistency (iOS HIG, accessibility, 60fps animations)
-    4. Performance Requirements (<2s launch, <100ms inference, <150MB memory)
-    5. Architecture Constraints (standard Xcode, NO Swift Package Manager)
+## Optionals & Error Handling
 
----
+- Use optionals with `if let`/`guard let` for nil handling
+- Never force-unwrap (`!`) without absolute certainty - prefer `guard` with failure path
+- Use `do/try/catch` for error handling with meaningful error types
+- Handle or propagate all errors - no empty catch blocks
 
-## Feature Specification
+# Modern SwiftUI Architecture Guidelines (2025)
 
-### Location
-`specs/001-ios-migration/`
+### No ViewModels - Use Native SwiftUI Data Flow
+**New features MUST follow these patterns:**
 
-### Specification Details
-- **spec.md** (24KB) - Complete feature specification
-  - 5 prioritized user stories (P1-P3)
-  - 36 functional requirements
-  - 16 success criteria (12 measurable + 4 user satisfaction)
-  - 10 edge cases with expected behaviors
-  - Complete Python→Swift component mapping
-  - Testing strategy and dependencies
+1. **Views as Pure State Expressions**
+   ```swift
+   struct MyView: View {
+       @Environment(MyService.self) private var service
+       @State private var viewState: ViewState = .loading
+       
+       enum ViewState {
+           case loading
+           case loaded(data: [Item])
+           case error(String)
+       }
+       
+       var body: some View {
+           // View is just a representation of its state
+       }
+   }
+   ```
 
-### Requirements Checklist
-- **checklists/requirements.md** - Quality validation (16/16 items passed ✅)
+2. **Use Environment Appropriately**
+   - **App-wide services**: Router, Theme, CurrentAccount, Client, etc. - use `@Environment`
+   - **Feature-specific services**: Timeline services, single-view logic - use `let` properties with `@Observable`
+   - Rule: Environment for cross-app/cross-feature dependencies, let properties for single-feature services
+   - Access app-wide via `@Environment(ServiceType.self)`
+   - Feature services: `private let myService = MyObservableService()`
 
----
+3. **Local State Management**
+   - Use `@State` for view-specific state
+   - Use `enum` for view states (loading, loaded, error)
+   - Use `.task(id:)` and `.onChange(of:)` for side effects
+   - Pass state between views using `@Binding`
 
-## Implementation Plan
+4. **No ViewModels Required**
+   - Views should be lightweight and disposable
+   - Business logic belongs in services/clients
+   - Test services independently, not views
+   - Use SwiftUI previews for visual testing
 
-### Location
-`specs/001-ios-migration/plan.md` (1,379 lines, 58KB)
+5. **When Views Get Complex**
+   - Split into smaller subviews
+   - Use compound views that compose smaller views
+   - Pass state via bindings between views
+   - Never reach for a ViewModel as the solution
 
-### Plan Contents
+# iOS 26 Features (Optional)
 
-#### Architecture
-- Standard Xcode project structure (constitution compliant)
-- MVVM pattern with protocol-based design
-- 10 major components:
-  1. **CameraManager** - AVCaptureSession, photo capture
-  2. **YOLOXDetector** - CoreML detection inference
-  3. **TinyCLIPEmbedder** - Visual embedding extraction
-  4. **SimilarityClusterer** - Agglomerative clustering
-  5. **OutlierFilter** - Size/aspect ratio filtering
-  6. **HistoryManager** - Core Data persistence
-  7. **AICounter** - Main orchestrator
-  8. **ContentView** - Main UI
-  9. **CameraView** - Clean viewfinder
-  10. **HistoryView** - Session history
+**Note**: If your app targets iOS 26+, you can take advantage of these cutting-edge SwiftUI APIs introduced in June 2025. These features are optional and should only be used when your deployment target supports iOS 26.
 
-#### Algorithm Migration Strategies
-- Size outlier filtering: median ± 1.0σ (Swift Accelerate framework)
-- Aspect ratio filtering: median ± 0.5σ
-- TinyCLIP L2 normalization: `vDSP_svdiv` + `cblas_snrm2`
-- Custom agglomerative clustering (no external dependencies)
-- IoU calculation and NMS
-- Thumbnail generation (crop main object, 200×200 JPEG)
+## Available iOS 26 SwiftUI APIs
 
-#### CoreML Integration
-- **YOLOX-S**: 640×640 input → [1,8400,85] output
-- **TinyCLIP**: 224×224 input → [1,256] embedding
-- Lazy model loading for memory optimization
-- Vision framework preprocessing
+When targeting iOS 26+, consider using these new APIs:
 
-#### Core Data Schema
+#### Liquid Glass Effects
+- `glassEffect(_:in:isEnabled:)` - Apply Liquid Glass effects to views
+- `buttonStyle(.glass)` - Apply Liquid Glass styling to buttons
+- `ToolbarSpacer` - Create visual breaks in toolbars with Liquid Glass
+
+#### Enhanced Scrolling
+- `scrollEdgeEffectStyle(_:for:)` - Configure scroll edge effects
+- `backgroundExtensionEffect()` - Duplicate, mirror, and blur views around edges
+
+#### Tab Bar Enhancements
+- `tabBarMinimizeBehavior(_:)` - Control tab bar minimization behavior
+- Search role for tabs with search field replacing tab bar
+- `TabViewBottomAccessoryPlacement` - Adjust accessory view content based on placement
+
+#### Web Integration
+- `WebView` and `WebPage` - Full control over browsing experience
+
+#### Drag and Drop
+- `draggable(_:_:)` - Drag multiple items
+- `dragContainer(for:id:in:selection:_:)` - Container for draggable views
+
+#### Animation
+- `@Animatable` macro - SwiftUI synthesizes custom animatable data properties
+
+#### UI Components
+- `Slider` with automatic tick marks when using step parameter
+- `windowResizeAnchor(_:)` - Set window anchor point for resizing
+
+#### Text Enhancements
+- `TextEditor` now supports `AttributedString`
+- `AttributedTextSelection` - Handle text selection with attributed text
+- `AttributedTextFormattingDefinition` - Define text styling in specific contexts
+- `FindContext` - Create find navigator in text editing views
+
+#### Accessibility
+- `AssistiveAccess` - Support Assistive Access in iOS scenes
+
+#### HDR Support
+- `Color.ResolvedHDR` - RGBA values with HDR headroom information
+
+#### UIKit Integration
+- `UIHostingSceneDelegate` - Host and present SwiftUI scenes in UIKit
+- `NSGestureRecognizerRepresentable` - Incorporate gesture recognizers from AppKit
+
+#### Immersive Spaces (if applicable)
+- `manipulable(coordinateSpace:operations:inertia:isEnabled:onChanged:)` - Hand gesture manipulation
+- `SurfaceSnappingInfo` - Snap volumes and windows to surfaces
+- `RemoteImmersiveSpace` - Render stereo content from Mac to Apple Vision Pro
+- `SpatialContainer` - 3D layout container
+- Depth-based modifiers: `aspectRatio3D(_:contentMode:)`, `rotation3DLayout(_:)`, `depthAlignment(_:)`
+
+## iOS 26 Usage Guidelines
+- **Only use when targeting iOS 26+**: Ensure your deployment target supports these APIs
+- **Progressive enhancement**: Use availability checks if supporting multiple iOS versions
+- **Feature detection**: Test on older simulators to ensure graceful fallbacks
+- **Modern aesthetics**: Leverage Liquid Glass effects for cutting-edge UI design
+
 ```swift
-CountingSession {
-  id: UUID
-  thumbnailData: Data       // 200×200 JPEG
-  count: Int16             // Main cluster count
-  timestamp: Date
-  confidenceThreshold: Float
-  similarityThreshold: Float
-  isFavorite: Bool
+// Example: Using iOS 26 features with availability checks
+struct ModernButton: View {
+    var body: some View {
+        Button("Tap me") {
+            // Action
+        }
+        .buttonStyle({
+            if #available(iOS 26.0, *) {
+                .glass
+            } else {
+                .bordered
+            }
+        }())
+    }
 }
 ```
 
-#### Performance Targets
-- <2s total processing (iPhone 12+)
-- <100ms YOLOX inference
-- <20ms TinyCLIP per crop
-- <150MB memory usage
-- 60fps UI responsiveness
-- <0.1% battery per image
+## SwiftUI State Management (MV Pattern)
 
-#### Testing Strategy
-- **Unit Tests**: 80%+ coverage (algorithms, filtering, clustering)
-- **Integration Tests**: Full pipeline validation
-- **UI Tests**: User flow automation
-- **Performance Tests**: Instruments profiling
-- **Accuracy Tests**: 95%+ vs manual count
+- **@State:** For all state management, including observable model objects
+- **@Observable:** Modern macro for making model classes observable (replaces ObservableObject)
+- **@Environment:** For dependency injection and shared app state
+- **@Binding:** For two-way data flow between parent and child views
+- **@Bindable:** For creating bindings to @Observable objects
+- Avoid ViewModels - put view logic directly in SwiftUI views using these state mechanisms
+- Keep views focused and extract reusable components
+
+Example with @Observable:
+```swift
+@Observable
+class UserSettings {
+    var theme: Theme = .light
+    var fontSize: Double = 16.0
+}
+
+@MainActor
+struct SettingsView: View {
+    @State private var settings = UserSettings()
+    
+    var body: some View {
+        VStack {
+            // Direct property access, no $ prefix needed
+            Text("Font Size: \(settings.fontSize)")
+            
+            // For bindings, use @Bindable
+            @Bindable var settings = settings
+            Slider(value: $settings.fontSize, in: 10...30)
+        }
+    }
+}
+
+// Sharing state across views
+@MainActor
+struct ContentView: View {
+    @State private var userSettings = UserSettings()
+    
+    var body: some View {
+        NavigationStack {
+            MainView()
+                .environment(userSettings)
+        }
+    }
+}
+
+@MainActor
+struct MainView: View {
+    @Environment(UserSettings.self) private var settings
+    
+    var body: some View {
+        Text("Current theme: \(settings.theme)")
+    }
+}
+```
+
+Example with .task modifier for async operations:
+```swift
+@Observable
+class DataModel {
+    var items: [Item] = []
+    var isLoading = false
+    
+    func loadData() async throws {
+        isLoading = true
+        defer { isLoading = false }
+        
+        // Simulated network call
+        try await Task.sleep(for: .seconds(1))
+        items = try await fetchItems()
+    }
+}
+
+@MainActor
+struct ItemListView: View {
+    @State private var model = DataModel()
+    
+    var body: some View {
+        List(model.items) { item in
+            Text(item.name)
+        }
+        .overlay {
+            if model.isLoading {
+                ProgressView()
+            }
+        }
+        .task {
+            // This task automatically cancels when view disappears
+            do {
+                try await model.loadData()
+            } catch {
+                // Handle error
+            }
+        }
+        .refreshable {
+            // Pull to refresh also uses async/await
+            try? await model.loadData()
+        }
+    }
+}
+```
+
+## Concurrency
+
+- **@MainActor:** All UI updates must use @MainActor isolation
+- **Actors:** Use actors for expensive operations like disk I/O, network calls, or heavy computation
+- **async/await:** Always prefer async functions over completion handlers
+- **Task:** Use structured concurrency with proper task cancellation
+- **.task modifier:** Always use .task { } on views for async operations tied to view lifecycle - it automatically handles cancellation
+- **Avoid Task { } in onAppear:** This doesn't cancel automatically and can cause memory leaks or crashes
+- No GCD usage - Swift Concurrency only
+
+### Sendable Conformance
+
+Swift 6 enforces strict concurrency checking. All types that cross concurrency boundaries must be Sendable:
+
+- **Value types (struct, enum):** Usually Sendable if all properties are Sendable
+- **Classes:** Must be marked `final` and have immutable or Sendable properties, or use `@unchecked Sendable` with thread-safe implementation
+- **@Observable classes:** Automatically Sendable when all properties are Sendable
+- **Closures:** Mark as `@Sendable` when captured by concurrent contexts
+
+```swift
+// Sendable struct - automatic conformance
+struct UserData: Sendable {
+    let id: UUID
+    let name: String
+}
+
+// Sendable class - must be final with immutable properties
+final class Configuration: Sendable {
+    let apiKey: String
+    let endpoint: URL
+    
+    init(apiKey: String, endpoint: URL) {
+        self.apiKey = apiKey
+        self.endpoint = endpoint
+    }
+}
+
+// @Observable with Sendable
+@Observable
+final class UserModel: Sendable {
+    var name: String = ""
+    var age: Int = 0
+    // Automatically Sendable if all stored properties are Sendable
+}
+
+// Using @unchecked Sendable for thread-safe types
+final class Cache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Any] = [:]
+    
+    func get(_ key: String) -> Any? {
+        lock.withLock { storage[key] }
+    }
+}
+
+// @Sendable closures
+func processInBackground(completion: @Sendable @escaping (Result<Data, Error>) -> Void) {
+    Task {
+        // Processing...
+        completion(.success(data))
+    }
+}
+```
+
+## Code Organization
+
+- Keep functions focused on a single responsibility
+- Break large functions (>50 lines) into smaller, testable units
+- Use extensions to organize code by feature or protocol conformance
+- Prefer `let` over `var` - use immutability by default
+- Use `[weak self]` in closures to prevent retain cycles
+- Always include `self.` when referring to instance properties in closures
+
+# Testing Guidelines
+
+We use **Swift Testing** framework (not XCTest) for all tests. Tests live in the package test target.
+
+## Swift Testing Basics
+
+```swift
+import Testing
+
+@Test func userCanLogin() async throws {
+    let service = AuthService()
+    let result = try await service.login(username: "test", password: "pass")
+    #expect(result.isSuccess)
+    #expect(result.user.name == "Test User")
+}
+
+@Test("User sees error with invalid credentials")
+func invalidLogin() async throws {
+    let service = AuthService()
+    await #expect(throws: AuthError.self) {
+        try await service.login(username: "", password: "")
+    }
+}
+```
+
+## Key Swift Testing Features
+
+- **@Test:** Marks a test function (replaces XCTest's test prefix)
+- **@Suite:** Groups related tests together
+- **#expect:** Validates conditions (replaces XCTAssert)
+- **#require:** Like #expect but stops test execution on failure
+- **Parameterized Tests:** Use @Test with arguments for data-driven tests
+- **async/await:** Full support for testing async code
+- **Traits:** Add metadata like `.bug()`, `.feature()`, or custom tags
+
+## Test Organization
+
+- Write tests in the package's Tests/ directory
+- One test file per source file when possible
+- Name tests descriptively explaining what they verify
+- Test both happy paths and edge cases
+- Add tests for bug fixes to prevent regression
+
+# Entitlements Management
+
+This template includes a **declarative entitlements system** that AI agents can safely modify without touching Xcode project files.
+
+## How It Works
+
+- **Entitlements File**: `Config/MyProject.entitlements` contains all app capabilities
+- **XCConfig Integration**: `CODE_SIGN_ENTITLEMENTS` setting in `Config/Shared.xcconfig` points to the entitlements file
+- **AI-Friendly**: Agents can edit the XML file directly to add/remove capabilities
+
+## Adding Entitlements
+
+To add capabilities to your app, edit `Config/MyProject.entitlements`:
+
+## Common Entitlements
+
+| Capability | Entitlement Key | Value |
+|------------|-----------------|-------|
+| HealthKit | `com.apple.developer.healthkit` | `<true/>` |
+| CloudKit | `com.apple.developer.icloud-services` | `<array><string>CloudKit</string></array>` |
+| Push Notifications | `aps-environment` | `development` or `production` |
+| App Groups | `com.apple.security.application-groups` | `<array><string>group.id</string></array>` |
+| Keychain Sharing | `keychain-access-groups` | `<array><string>$(AppIdentifierPrefix)bundle.id</string></array>` |
+| Background Modes | `com.apple.developer.background-modes` | `<array><string>mode-name</string></array>` |
+| Contacts | `com.apple.developer.contacts.notes` | `<true/>` |
+| Camera | `com.apple.developer.avfoundation.audio` | `<true/>` |
+
+# XcodeBuildMCP Tool Usage
+
+To work with this project, build, test, and development commands should use XcodeBuildMCP tools instead of raw command-line calls.
+
+## Project Discovery & Setup
+
+```javascript
+// Discover Xcode projects in the workspace
+discover_projs({
+    workspaceRoot: "/path/to/YourApp"
+})
+
+// List available schemes
+list_schems_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace"
+})
+```
+
+## Building for Simulator
+
+```javascript
+// Build for iPhone simulator by name
+build_sim_name_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace",
+    scheme: "YourApp",
+    simulatorName: "iPhone 16",
+    configuration: "Debug"
+})
+
+// Build and run in one step
+build_run_sim_name_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace",
+    scheme: "YourApp", 
+    simulatorName: "iPhone 16"
+})
+```
+
+## Building for Device
+
+```javascript
+// List connected devices first
+list_devices()
+
+// Build for physical device
+build_dev_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace",
+    scheme: "YourApp",
+    configuration: "Debug"
+})
+```
+
+## Testing
+
+```javascript
+// Run tests on simulator
+test_sim_name_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace",
+    scheme: "YourApp",
+    simulatorName: "iPhone 16"
+})
+
+// Run tests on device
+test_device_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace",
+    scheme: "YourApp",
+    deviceId: "DEVICE_UUID_HERE"
+})
+
+// Test Swift Package
+swift_package_test({
+    packagePath: "/path/to/YourAppPackage"
+})
+```
+
+## Simulator Management
+
+```javascript
+// List available simulators
+list_sims({
+    enabled: true
+})
+
+// Boot simulator
+boot_sim({
+    simulatorUuid: "SIMULATOR_UUID"
+})
+
+// Install app
+install_app_sim({
+    simulatorUuid: "SIMULATOR_UUID",
+    appPath: "/path/to/YourApp.app"
+})
+
+// Launch app
+launch_app_sim({
+    simulatorUuid: "SIMULATOR_UUID",
+    bundleId: "com.example.YourApp"
+})
+```
+
+## Device Management
+
+```javascript
+// Install on device
+install_app_device({
+    deviceId: "DEVICE_UUID",
+    appPath: "/path/to/YourApp.app"
+})
+
+// Launch on device
+launch_app_device({
+    deviceId: "DEVICE_UUID",
+    bundleId: "com.example.YourApp"
+})
+```
+
+## UI Automation
+
+```javascript
+// Get UI hierarchy
+describe_ui({
+    simulatorUuid: "SIMULATOR_UUID"
+})
+
+// Tap element
+tap({
+    simulatorUuid: "SIMULATOR_UUID",
+    x: 100,
+    y: 200
+})
+
+// Type text
+type_text({
+    simulatorUuid: "SIMULATOR_UUID",
+    text: "Hello World"
+})
+
+// Take screenshot
+screenshot({
+    simulatorUuid: "SIMULATOR_UUID"
+})
+```
+
+## Log Capture
+
+```javascript
+// Start capturing simulator logs
+start_sim_log_cap({
+    simulatorUuid: "SIMULATOR_UUID",
+    bundleId: "com.example.YourApp"
+})
+
+// Stop and retrieve logs
+stop_sim_log_cap({
+    logSessionId: "SESSION_ID"
+})
+
+// Device logs
+start_device_log_cap({
+    deviceId: "DEVICE_UUID",
+    bundleId: "com.example.YourApp"
+})
+```
+
+## Utility Functions
+
+```javascript
+// Get bundle ID from app
+get_app_bundle_id({
+    appPath: "/path/to/YourApp.app"
+})
+
+// Clean build artifacts
+clean_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace"
+})
+
+// Get app path for simulator
+get_sim_app_path_name_ws({
+    workspacePath: "/path/to/YourApp.xcworkspace",
+    scheme: "YourApp",
+    platform: "iOS Simulator",
+    simulatorName: "iPhone 16"
+})
+```
+
+# Development Workflow
+
+1. **Make changes in the Package**: All feature development happens in YourAppPackage/Sources/
+2. **Write tests**: Add Swift Testing tests in YourAppPackage/Tests/
+3. **Build and test**: Use XcodeBuildMCP tools to build and run tests
+4. **Run on simulator**: Deploy to simulator for manual testing
+5. **UI automation**: Use describe_ui and automation tools for UI testing
+6. **Device testing**: Deploy to physical device when needed
+
+# Best Practices
+
+## SwiftUI & State Management
+
+- Keep views small and focused
+- Extract reusable components into their own files
+- Use @ViewBuilder for conditional view composition
+- Leverage SwiftUI's built-in animations and transitions
+- Avoid massive body computations - break them down
+- **Always use .task modifier** for async work tied to view lifecycle - it automatically cancels when the view disappears
+- Never use Task { } in onAppear - use .task instead for proper lifecycle management
+
+## Performance
+
+- Use .id() modifier sparingly as it forces view recreation
+- Implement Equatable on models to optimize SwiftUI diffing
+- Use LazyVStack/LazyHStack for large lists
+- Profile with Instruments when needed
+- @Observable tracks only accessed properties, improving performance over @Published
+
+## Accessibility
+
+- Always provide accessibilityLabel for interactive elements
+- Use accessibilityIdentifier for UI testing
+- Implement accessibilityHint where actions aren't obvious
+- Test with VoiceOver enabled
+- Support Dynamic Type
+
+## Security & Privacy
+
+- Never log sensitive information
+- Use Keychain for credential storage
+- All network calls must use HTTPS
+- Request minimal permissions
+- Follow App Store privacy guidelines
+
+## Data Persistence
+
+When data persistence is required, always prefer **SwiftData** over CoreData. However, carefully consider whether persistence is truly necessary - many apps can function well with in-memory state that loads on launch.
+
+### When to Use SwiftData
+
+- You have complex relational data that needs to persist across app launches
+- You need advanced querying capabilities with predicates and sorting
+- You're building a data-heavy app (note-taking, inventory, task management)
+- You need CloudKit sync with minimal configuration
+
+### When NOT to Use Data Persistence
+
+- Simple user preferences (use UserDefaults)
+- Temporary state that can be reloaded from network
+- Small configuration data (consider JSON files or plist)
+- Apps that primarily display remote data
+
+### SwiftData Best Practices
+
+```swift
+import SwiftData
+
+@Model
+final class Task {
+    var title: String
+    var isCompleted: Bool
+    var createdAt: Date
+    
+    init(title: String) {
+        self.title = title
+        self.isCompleted = false
+        self.createdAt = Date()
+    }
+}
+
+// In your app
+@main
+struct MyProjectApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .modelContainer(for: Task.self)
+        }
+    }
+}
+
+// In your views
+struct TaskListView: View {
+    @Query private var tasks: [Task]
+    @Environment(\.modelContext) private var context
+    
+    var body: some View {
+        List(tasks) { task in
+            Text(task.title)
+        }
+        .toolbar {
+            Button("Add") {
+                let newTask = Task(title: "New Task")
+                context.insert(newTask)
+            }
+        }
+    }
+}
+```
+
+**Important:** Never use CoreData for new projects. SwiftData provides a modern, type-safe API that's easier to work with and integrates seamlessly with SwiftUI.
 
 ---
 
-## Implementation Timeline (11 Weeks)
-
-### Phase 0: Project Setup (Week 1)
-- Create Xcode project (standard structure)
-- Integrate CoreML models
-- Set up Core Data stack
-- Configure build settings
-
-### Phase 1: Detection Layer (Weeks 2-3)
-- YOLOXDetector implementation
-- Input preprocessing
-- Output parsing
-- Outlier filtering
-
-### Phase 2: Clustering Layer (Weeks 4-5)
-- TinyCLIPEmbedder implementation
-- Custom agglomerative clustering
-- Cosine similarity with Accelerate
-- IoU merging
-
-### Phase 3: Pipeline Integration (Week 6)
-- AICounter orchestrator
-- End-to-end pipeline
-- Error handling
-- Progress reporting
-
-### Phase 4: Camera System (Week 7)
-- AVCaptureSession setup
-- Clean viewfinder UI
-- Photo capture flow
-- Permission handling
-
-### Phase 5: Persistence Layer (Week 8)
-- Core Data CRUD operations
-- Thumbnail generation
-- History management (max 100 entries)
-- Auto-cleanup
-
-### Phase 6: UI Implementation (Week 9)
-- ContentView (main screen)
-- CameraView (viewfinder)
-- HistoryView (session list)
-- SettingsView (thresholds)
-
-### Phase 7: Optimization (Week 10)
-- Performance profiling
-- Memory optimization
-- Battery efficiency
-- Frame rate tuning
-
-### Phase 8: Testing & Launch (Week 11)
-- TestFlight beta
-- Bug fixes
-- App Store submission
-- Launch preparation
-
----
-
-## Key Design Decisions
-
-### 1. "Capture First, Count Second" Workflow
-- **Rationale**: Battery efficiency, clean UX, optimal performance
-- **Implementation**: No real-time inference on video frames
-- **Benefit**: Minimal battery drain, smooth 60fps camera preview
-
-### 2. Main Cluster Only Display
-- **Rationale**: Simplified UX, clear user intent
-- **Implementation**: Show count of largest cluster only
-- **Benefit**: Reduces cognitive load, clearer results
-
-### 3. Thumbnail Storage Strategy
-- **Rationale**: Privacy + storage optimization
-- **Implementation**: Crop one representative object (200×200 JPEG)
-- **Benefit**: <20MB for 100 entries vs. full images (>500MB)
-
-### 4. Zero External Dependencies
-- **Rationale**: Constitution compliance, app size, reliability
-- **Implementation**: Custom clustering, Accelerate for math
-- **Benefit**: <50MB app size, no dependency conflicts
-
-### 5. Standard Xcode Project Structure
-- **Rationale**: Constitution principle #5
-- **Implementation**: Traditional Xcode layout, no SPM architecture
-- **Benefit**: Familiar structure, easier onboarding
-
----
-
-## Success Criteria
-
-### Technical
-- ✅ Feature parity with Python script
-- ✅ <2s processing time on iPhone 12+
-- ✅ <150MB memory usage
-- ✅ 95%+ detection accuracy
-- ✅ 60fps UI responsiveness
-- ✅ <0.5% crash rate
-
-### User Experience
-- ✅ <10s total workflow (capture → count → view)
-- ✅ Clean, intuitive iOS interface
-- ✅ iOS Human Interface Guidelines compliant
-- ✅ Accessibility support (VoiceOver, Dynamic Type)
-
-### Quality
-- ✅ 80%+ test coverage
-- ✅ Zero critical bugs at launch
-- ✅ TestFlight validation with 20+ users
-- ✅ 4.5+ App Store rating target
-
----
-
-## Next Steps
-
-1. **Execute Phase 0**: Create Xcode project and integrate CoreML models
-2. **Implement Core Algorithms**: Start with YOLOXDetector and outlier filtering
-3. **Build Testing Infrastructure**: Set up XCTest framework
-4. **Iterate on Pipeline**: Validate against Python reference
-5. **Polish UI/UX**: Refine based on TestFlight feedback
-
----
-
-## References
-
-- **YOLOX Paper**: https://arxiv.org/abs/2107.08430
-- **TinyCLIP**: https://github.com/wkcn/TinyCLIP
-- **CoreML Docs**: https://developer.apple.com/documentation/coreml
-- **Vision Framework**: https://developer.apple.com/documentation/vision
-- **iOS HIG**: https://developer.apple.com/design/human-interface-guidelines/
-
----
-
-## Contact & Ownership
-
-- **Product Owner**: TBD
-- **Tech Lead**: TBD
-- **Design Lead**: TBD
-- **QA Lead**: TBD
-
----
-
-## Document History
-
-| Date | Event | Details |
-|------|-------|---------|
-| 2025-12-09 | Constitution Created | v1.0.0 with 5 core principles |
-| 2025-12-09 | Specification Complete | 001-ios-migration spec.md (24KB) |
-| 2025-12-09 | Implementation Plan Complete | 001-ios-migration plan.md (58KB) |
-| 2025-12-09 | Project Ready | Ready for Phase 0 execution |
-
----
-
-**Project Status**: 📋 **PLANNING COMPLETE** → Ready for implementation
+Remember: This project prioritizes clean, simple SwiftUI code using the platform's native state management. Keep the app shell minimal and implement all features in the Swift Package.

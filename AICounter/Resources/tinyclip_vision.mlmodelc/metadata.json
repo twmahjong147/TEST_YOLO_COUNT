@@ -1,0 +1,80 @@
+[
+  {
+    "shortDescription" : "TinyCLIP-ViT-8M-16 vision encoder for visual embeddings",
+    "metadataOutputVersion" : "3.0",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 256)",
+        "shortDescription" : "",
+        "shape" : "[1, 256]",
+        "name" : "var_651",
+        "type" : "MultiArray"
+      }
+    ],
+    "version" : "1.0",
+    "modelParameters" : [
+
+    ],
+    "author" : "TinyCLIP Vision Encoder",
+    "specificationVersion" : 6,
+    "storagePrecision" : "Float16",
+    "license" : "MIT",
+    "mlProgramOperationTypeHistogram" : {
+      "Concat" : 1,
+      "ReduceL2Norm" : 1,
+      "Linear" : 60,
+      "Gelu" : 10,
+      "LayerNorm" : 22,
+      "Transpose" : 41,
+      "Matmul" : 20,
+      "SliceByIndex" : 1,
+      "RealDiv" : 1,
+      "Softmax" : 10,
+      "Mul" : 11,
+      "Cast" : 2,
+      "Reshape" : 41,
+      "Add" : 21,
+      "Conv" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "12.0",
+      "tvOS" : "15.0",
+      "visionOS" : "1.0",
+      "watchOS" : "8.0",
+      "iOS" : "15.0",
+      "macCatalyst" : "15.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "height" : "224",
+        "colorspace" : "RGB",
+        "isOptional" : "0",
+        "width" : "224",
+        "isColor" : "1",
+        "formattedType" : "Image (Color 224 × 224)",
+        "hasSizeFlexibility" : "0",
+        "type" : "Image",
+        "shortDescription" : "",
+        "name" : "image"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.source_dialect" : "TorchScript",
+      "com.github.apple.coremltools.source" : "torch==2.8.0",
+      "com.github.apple.coremltools.version" : "8.3.0"
+    },
+    "generatedClassName" : "tinyclip_vision",
+    "method" : "predict"
+  }
+]

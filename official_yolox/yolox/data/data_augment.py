@@ -8,6 +8,8 @@ Kept for inference only (ValTransform and preproc).
 
 import cv2
 import numpy as np
+import os
+import datetime
 
 
 def preproc(img, input_size, swap=(2, 0, 1)):
@@ -24,6 +26,14 @@ def preproc(img, input_size, swap=(2, 0, 1)):
         interpolation=cv2.INTER_LINEAR,
     ).astype(np.uint8)
     padded_img[: int(img.shape[0] * r), : int(img.shape[1] * r)] = resized_img
+
+    # Save padded image for debugging
+    try:
+        os.makedirs("debug_outputs", exist_ok=True)
+        fname = f"debug_outputs/padded_img_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.png"
+        cv2.imwrite(fname, padded_img)
+    except Exception:
+        pass
 
     padded_img = padded_img.transpose(swap)
     padded_img = np.ascontiguousarray(padded_img, dtype=np.float32)
