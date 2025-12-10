@@ -105,8 +105,8 @@ enum ImageProcessor {
 
         // Draw resized image centered on padded background
         // Place at top-left (0,0) to match Python
-        let xOffset = 0
-        let yOffset = 0
+        let xOffset = 0 //(resizedWidth == targetWidth) ? 0 : (targetWidth - resizedWidth) / 2
+        let yOffset = 0 //(resizedHeight == targetHeight) ? 0 : (targetHeight - resizedHeight) / 2
         context.interpolationQuality = .high
         context.draw(
             image,
@@ -115,22 +115,22 @@ enum ImageProcessor {
 
         guard let paddedImage = context.makeImage() else { return nil }
 
-        // Save paddedImage to Photos for debugging (requires Info.plist NSPhotoLibraryAddUsageDescription)
-        // let uiImage = UIImage(cgImage: paddedImage)
-        // PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-        //     switch status {
-        //     case .authorized, .limited:
-        //         PHPhotoLibrary.shared().performChanges({
-        //             PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
-        //         }) { success, error in
-        //             if let error = error {
-        //                 print("Failed to save paddedImage to Photos: \(error)")
-        //             }
-        //         }
-        //     default:
-        //         print("Photo library access not granted: \(status.rawValue)")
-        //     }
-        // }
+//      Save paddedImage to Photos for debugging (requires Info.plist NSPhotoLibraryAddUsageDescription)
+//        let uiImage = UIImage(cgImage: paddedImage)
+//        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+//            switch status {
+//            case .authorized, .limited:
+//                PHPhotoLibrary.shared().performChanges({
+//                    PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
+//                }) { success, error in
+//                    if let error = error {
+//                        print("Failed to save paddedImage to Photos: \(error)")
+//                    }
+//                }
+//            default:
+//                print("Photo library access not granted: \(status.rawValue)")
+//            }
+//        }
 
         // Convert to [Float] in CHW order
         let width = targetWidth

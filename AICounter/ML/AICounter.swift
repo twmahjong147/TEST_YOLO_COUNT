@@ -17,6 +17,7 @@ final class AICounter {
     func count(
         image: CGImage,
         confidenceThreshold: Float = 0.001,
+        nmsThreshold: Float = 0.65,
         similarityThreshold: Float = 0.80
     ) async throws -> CountResult {
         let startTime = Date()
@@ -24,7 +25,7 @@ final class AICounter {
         var detections = try detector.detect(
             image: image,
             confidenceThreshold: confidenceThreshold,
-            nmsThreshold: 0.65
+            nmsThreshold: nmsThreshold
         )
         
         print("Stage 1: Detected \(detections.count) objects")

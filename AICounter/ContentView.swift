@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var historyManager = HistoryManager()
     
     private let confidenceThreshold: Float = 0.001
+    private let nmsThreshold: Float  = 0.65
     private let similarityThreshold: Float = 0.80
     
     init() {}
@@ -209,6 +210,7 @@ struct ContentView: View {
             let result = try await aiCounter.count(
                 image: image,
                 confidenceThreshold: confidenceThreshold,
+                nmsThreshold: nmsThreshold,
                 similarityThreshold: similarityThreshold
             )
             
