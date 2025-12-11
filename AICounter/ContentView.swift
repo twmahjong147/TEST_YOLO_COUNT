@@ -186,7 +186,7 @@ struct ContentView: View {
             context.setLineWidth(isMain ? 3.0 : 1.5)
             context.stroke(rect)
 
-            let label = det.className ?? "cls_\(det.classId)"
+            let label = "\(det.id)"
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 12),
                 .foregroundColor: UIColor.white

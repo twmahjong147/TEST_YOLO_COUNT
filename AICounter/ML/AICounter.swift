@@ -4,7 +4,8 @@ import CoreGraphics
 @MainActor
 final class AICounter {
     private let detector = YOLOXDetector()
-    private let embedder = TinyCLIPEmbedder()
+    // Use Vision featurePrint by default for visual embeddings
+    private let embedder: any VisualEmbedder = VisionFeatureEmbedder() // TinyCLIPEmbedder()
     
     private(set) var isLoaded = false
     
@@ -45,7 +46,7 @@ final class AICounter {
         }
         
         var embeddings: [[Float]] = []
-        var histograms: [[Float]] = []
+        // var histograms: [[Float]] = []
         var validDetections: [Detection] = []
         
         for detection in detections {
@@ -54,8 +55,8 @@ final class AICounter {
                     let embedding = try embedder.getEmbedding(for: crop)
                     embeddings.append(embedding)
                     // compute color histogram for the crop (L2-normalised)
-                    let hist = ImageProcessor.colorHistogram(crop)
-                    histograms.append(hist)
+                    // let hist = ImageProcessor.colorHistogram(crop)
+                    // histograms.append(hist)
                     validDetections.append(detection)
                 } catch {
                     continue
@@ -71,8 +72,8 @@ final class AICounter {
         
         let clusterLabels = SimilarityClusterer.cluster(
             embeddings: embeddings,
-            colorHistograms: histograms,
-            histogramWeight: 0.20,
+            // colorHistograms: histograms,
+            // histogramWeight: 0.20,
             similarityThreshold: similarityThreshold
         )
         
@@ -86,55 +87,81 @@ final class AICounter {
         }
         
         // Build detections with cluster info (mirror Python behavior)
-        var clusteredDetections: [Detection] = []
+        var mainClusteredDetections: [Detection] = []
         for (idx, det) in validDetections.enumerated() {
             let clusterId = clusterLabels[idx]
-            let isMain = (clusterId == largestCluster.key)
+            if (clusterId != largestCluster.key) {
+                continue
+            }
             // Set confidence to 1.0 if main cluster else 0.5 to mirror Python
-            let conf: Float = isMain ? 1.0 : 0.5
-            let newDet = Detection(bbox: det.bbox,
-                                   confidence: conf,
+//            let conf: Float = 1.0
+            let newDet = Detection(id: det.id,
+                                   bbox: det.bbox,
+                                   confidence: det.confidence,
                                    classId: det.classId,
                                    className: "cluster_\(clusterId)",
                                    objConf: det.objConf,
                                    clsConf: 1.0,
                                    clusterId: clusterId,
-                                   isMainCluster: isMain)
-            clusteredDetections.append(newDet)
+                                   isMainCluster: true)
+            mainClusteredDetections.append(newDet)
             
             // Save debug crop image with overlay text to debug_outputs (best-effort)            
-            if let cropCG = ImageProcessor.cropImage(image, to: det.bbox), isMain {
-                let ui = UIImage(cgImage: cropCG)
-                let text = "Cluster \(clusterId)" + (isMain ? " (MAIN)" : "")
-                UIGraphicsBeginImageContextWithOptions(ui.size, false, ui.scale)
-                ui.draw(at: .zero)
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 12),
-                    .foregroundColor: UIColor.white,
-                    .backgroundColor: UIColor.black.withAlphaComponent(0.5)
-                ]
-                let textRect = CGRect(x: 4, y: 4, width: ui.size.width - 8, height: 20)
-                text.draw(in: textRect, withAttributes: attrs)
-                let annotated = UIGraphicsGetImageFromCurrentImageContext()
-                UIGraphicsEndImageContext()
-                if let annotated = annotated, let data = annotated.jpegData(compressionQuality: 0.9) {
-                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-                    if let docs = docs {
-                        let debugDir = docs.appendingPathComponent("debug_outputs")
-                        try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
-                        let fname = "crop_\(idx)_cluster_\(clusterId)_\(Int(Date().timeIntervalSince1970)).jpg"
-                        let url = debugDir.appendingPathComponent(fname)
-                        try? data.write(to: url)
-                    }
+//            if let cropCG = ImageProcessor.cropImage(image, to: det.bbox) {
+//                let ui = UIImage(cgImage: cropCG)
+//                let text = "\(det.id)"
+//                UIGraphicsBeginImageContextWithOptions(ui.size, false, ui.scale)
+//                ui.draw(at: .zero)
+//                let attrs: [NSAttributedString.Key: Any] = [
+//                    .font: UIFont.systemFont(ofSize: 12),
+//                    .foregroundColor: UIColor.white,
+//                    .backgroundColor: UIColor.black.withAlphaComponent(0.5)
+//                ]
+//                let textRect = CGRect(x: 4, y: 4, width: ui.size.width - 8, height: 20)
+//                text.draw(in: textRect, withAttributes: attrs)
+//                let annotated = UIGraphicsGetImageFromCurrentImageContext()
+//                UIGraphicsEndImageContext()
+//                if let annotated = annotated, let data = annotated.jpegData(compressionQuality: 0.9) {
+//                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+//                    if let docs = docs {
+//                        let debugDir = docs.appendingPathComponent("debug_outputs")
+//                        try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+//                        let fname = "crop_\(idx)_id_\(det.id)_cluster_\(clusterId)_\(Int(Date().timeIntervalSince1970)).jpg"
+//                        let url = debugDir.appendingPathComponent(fname)
+//                        try? data.write(to: url)
+//                    }
+//                }
+//            }
+        }
+        
+        // Apply IoA (intersection over smaller-area) suppression within the main cluster
+        // to remove fully-contained or near-duplicate boxes when only the main objects are needed.
+        let ioaThreshold: Float = 0.9
+        let sortedMain = mainClusteredDetections.sorted { $0.confidence > $1.confidence }
+        var finalMain: [Detection] = []
+        var suppressed = Set<Int>()
+        for i in 0..<sortedMain.count {
+            if suppressed.contains(i) { continue }
+            finalMain.append(sortedMain[i])
+            let areaI = sortedMain[i].area
+            for j in (i + 1)..<sortedMain.count {
+                if suppressed.contains(j) { continue }
+                let inter = sortedMain[i].bbox.intersection(sortedMain[j].bbox)
+                if inter.isNull { continue }
+                let interArea = inter.width * inter.height
+                let areaJ = sortedMain[j].area
+                let ioa = Float(interArea / min(areaI, areaJ))
+                if ioa > ioaThreshold {
+                    suppressed.insert(j)
                 }
             }
         }
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
         
         return CountResult(
-            count: largestCluster.value,
-            detections: clusteredDetections,
+            count: finalMain.count,
+            detections: finalMain,
             largestClusterId: largestCluster.key,
             clusterLabels: clusterLabels,
             processingTime: processingTime

@@ -6,7 +6,7 @@ import Vision
 final class YOLOXDetector {
     private var model: MLModel?
     private let inputSize = CGSize(width: 640, height: 640)
-
+    
     func loadModel() async throws {
         // Look for compiled model first
         var modelURL: URL?
@@ -91,7 +91,7 @@ final class YOLOXDetector {
                                     y: b.origin.y / scale,
                                     width: b.width / scale,
                                     height: b.height / scale)
-            return Detection(bbox: scaledBBox, confidence: det.confidence, classId: det.classId)
+            return Detection(id: det.id, bbox: scaledBBox, confidence: det.confidence, classId: det.classId)
         }
 
         return scaledDetections
@@ -103,7 +103,7 @@ final class YOLOXDetector {
         let sorted = detections.sorted { $0.confidence > $1.confidence }
         var keep: [Detection] = []
         var suppressed = Set<Int>()
-
+        
         for (i, detection) in sorted.enumerated() {
             if suppressed.contains(i) { continue }
 
@@ -164,10 +164,10 @@ final class YOLOXDetector {
             let y1 = yCenter - h / 2.0
 
             let bbox = CGRect(x: CGFloat(x1), y: CGFloat(y1), width: CGFloat(w), height: CGFloat(h))
-
-            detections.append(Detection(bbox: bbox, confidence: confidence, classId: maxClassId))
+            
+            detections.append(Detection(id: i, bbox: bbox, confidence: confidence, classId: maxClassId))
         }
-
+        
         // If no detections, return empty
         if detections.isEmpty { return [] }
 

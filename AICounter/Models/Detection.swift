@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 struct Detection: Identifiable, Sendable {
-    let id = UUID()
+    let id: Int
     let bbox: CGRect
     let confidence: Float
     let classId: Int
@@ -17,7 +17,8 @@ struct Detection: Identifiable, Sendable {
     var clusterId: Int?               // cluster assignment
     var isMainCluster: Bool = false
 
-    init(bbox: CGRect,
+    init(id: Int,
+         bbox: CGRect,
          confidence: Float,
          classId: Int = 0,
          className: String? = nil,
@@ -25,6 +26,7 @@ struct Detection: Identifiable, Sendable {
          clsConf: Float? = nil,
          clusterId: Int? = nil,
          isMainCluster: Bool = false) {
+        self.id = id
         self.bbox = bbox
         self.confidence = confidence
         self.classId = classId
