@@ -231,19 +231,19 @@ struct ContentView: View {
                 Task { @MainActor in
                     let vis = renderVisualization(source: ui, result: result)
                     // Save to Photo Library
-                    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-                        if status == .authorized || status == .limited {
-                            PHPhotoLibrary.shared().performChanges({
-                                PHAssetChangeRequest.creationRequestForAsset(from: vis)
-                            }, completionHandler: { success, error in
-                                if let error = error {
-                                    print("Failed saving visualization to Photos: \(error)")
-                                }
-                            })
-                        } else {
-                            print("Photo library access not granted: \(status.rawValue)")
-                        }
-                    }
+//                    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+//                        if status == .authorized || status == .limited {
+//                            PHPhotoLibrary.shared().performChanges({
+//                                PHAssetChangeRequest.creationRequestForAsset(from: vis)
+//                            }, completionHandler: { success, error in
+//                                if let error = error {
+//                                    print("Failed saving visualization to Photos: \(error)")
+//                                }
+//                            })
+//                        } else {
+//                            print("Photo library access not granted: \(status.rawValue)")
+//                        }
+//                    }
                     // Show visualization in UI
                     selectedImage = vis
                 }
