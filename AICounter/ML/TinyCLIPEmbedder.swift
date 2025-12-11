@@ -1,7 +1,6 @@
 import CoreML
 import UIKit
 
-@MainActor
 final class TinyCLIPEmbedder: VisualEmbedder {
     private var model: MLModel?
     private let inputSize = CGSize(width: 224, height: 224)

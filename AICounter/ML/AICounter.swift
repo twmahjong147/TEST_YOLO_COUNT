@@ -50,31 +50,52 @@ final class AICounter {
             throw ProcessingError.insufficientDetections
         }
         
-        var embeddings: [[Float]] = []
-        // var histograms: [[Float]] = []
-        var validDetections: [Detection] = []
-        var embeddingTotalTime: CFAbsoluteTime = 0
-        var embedCount = 0
-        
-        for detection in detections {
-            if let crop = ImageProcessor.cropImage(image, to: detection.bbox) {
-                do {
-                    let embStart = CFAbsoluteTimeGetCurrent()
-                    let embedding = try embedder.getEmbedding(for: crop)
-                    let embTime = CFAbsoluteTimeGetCurrent() - embStart
-                    embeddingTotalTime += embTime
-                    embedCount += 1
-                    embeddings.append(embedding)
-                    // compute color histogram for the crop (L2-normalised)
-                    // let hist = ImageProcessor.colorHistogram(crop)
-                    // histograms.append(hist)
-                    validDetections.append(detection)
-                } catch {
-                    continue
+        let stage2Start = CFAbsoluteTimeGetCurrent()
+        // Bounded concurrency for embedding extraction
+        let concurrency = min(max(ProcessInfo.processInfo.activeProcessorCount - 1, 1), 4)
+
+        // Precompute crops (synchronous) to avoid cropping inside tasks
+        let crops: [CGImage?] = detections.map { ImageProcessor.cropImage(image, to: $0.bbox) }
+        var embeddingsByIndex = Array<[Float]?>(repeating: nil, count: detections.count)
+        let embedderLocal = self.embedder
+
+        await withTaskGroup(of: (Int, [Float]?).self) { group in
+            var pending = 0
+            for (i, cropOpt) in crops.enumerated() {
+                guard let crop = cropOpt else { continue }
+                group.addTask {
+                    do {
+                        let emb = try embedderLocal.getEmbedding(for: crop)
+                        return (i, emb)
+                    } catch {
+                        return (i, nil)
+                    }
+                }
+                pending += 1
+                if pending >= concurrency {
+                    if let (idx, emb) = await group.next() {
+                        embeddingsByIndex[idx] = emb
+                        pending -= 1
+                    }
                 }
             }
+            while let (idx, emb) = await group.next() {
+                embeddingsByIndex[idx] = emb
+            }
         }
-        
+
+        let embeddingTotalTime = CFAbsoluteTimeGetCurrent() - stage2Start
+
+        var embeddings: [[Float]] = []
+        var validDetections: [Detection] = []
+        for (i, embOpt) in embeddingsByIndex.enumerated() {
+            if let emb = embOpt {
+                embeddings.append(emb)
+                validDetections.append(detections[i])
+            }
+        }
+
+        let embedCount = embeddings.count
         let avgEmbedTime = embedCount > 0 ? embeddingTotalTime / Double(embedCount) : 0
         print("Stage 2: Extracted \(embeddings.count) embeddings (total time: \(embeddingTotalTime)s, avg: \(avgEmbedTime)s)")
         
