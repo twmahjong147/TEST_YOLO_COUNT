@@ -50,41 +50,79 @@ final class AICounter {
             throw ProcessingError.insufficientDetections
         }
         
-        let stage2Start = CFAbsoluteTimeGetCurrent()
-        // Bounded concurrency for embedding extraction
-        let concurrency = min(max(ProcessInfo.processInfo.activeProcessorCount - 1, 1), 4)
-
         // Precompute crops (synchronous) to avoid cropping inside tasks
         let crops: [CGImage?] = detections.map { ImageProcessor.cropImage(image, to: $0.bbox) }
-        var embeddingsByIndex = Array<[Float]?>(repeating: nil, count: detections.count)
         let embedderLocal = self.embedder
 
-        await withTaskGroup(of: (Int, [Float]?).self) { group in
-            var pending = 0
-            for (i, cropOpt) in crops.enumerated() {
-                guard let crop = cropOpt else { continue }
-                group.addTask {
-                    do {
-                        let emb = try embedderLocal.getEmbedding(for: crop)
-                        return (i, emb)
-                    } catch {
-                        return (i, nil)
+        // Helper to run extraction with a given concurrency. Returns elapsed time and embeddings by index.
+        func runExtraction(concurrency: Int) async -> (Double, [ [Float]? ]) {
+            let start = CFAbsoluteTimeGetCurrent()
+            var results = Array<[Float]?>(repeating: nil, count: crops.count)
+
+            await withTaskGroup(of: [(Int, [Float]?)].self) { group in
+                for workerId in 0..<concurrency {
+                    group.addTask {
+                        var pairs: [(Int, [Float]?)] = []
+                        // If embedder supports Vision worker optimization, use it
+                        if let v = embedderLocal as? VisionFeatureEmbedder {
+                            if let worker = v.worker(at: workerId) {
+                                for i in stride(from: workerId, to: crops.count, by: concurrency) {
+                                    guard let crop = crops[i] else { continue }
+                                    do {
+                                        let emb = try worker.embedding(for: crop)
+                                        pairs.append((i, emb))
+                                    } catch {
+                                        pairs.append((i, nil))
+                                    }
+                                }
+                            } else {
+                                // Fallback if pool not available
+                                for i in stride(from: workerId, to: crops.count, by: concurrency) {
+                                    guard let crop = crops[i] else { continue }
+                                    do {
+                                        let emb = try v.makeWorker().embedding(for: crop)
+                                        pairs.append((i, emb))
+                                    } catch {
+                                        pairs.append((i, nil))
+                                    }
+                                }
+                            }
+                        } else {
+                            for i in stride(from: workerId, to: crops.count, by: concurrency) {
+                                guard let crop = crops[i] else { continue }
+                                do {
+                                    let emb = try embedderLocal.getEmbedding(for: crop)
+                                    pairs.append((i, emb))
+                                } catch {
+                                    pairs.append((i, nil))
+                                }
+                            }
+                        }
+                        return pairs
                     }
                 }
-                pending += 1
-                if pending >= concurrency {
-                    if let (idx, emb) = await group.next() {
-                        embeddingsByIndex[idx] = emb
-                        pending -= 1
-                    }
+
+                while let pairs = await group.next() {
+                    for (idx, emb) in pairs { results[idx] = emb }
                 }
             }
-            while let (idx, emb) = await group.next() {
-                embeddingsByIndex[idx] = emb
-            }
+
+            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            return (elapsed, results)
         }
 
-        let embeddingTotalTime = CFAbsoluteTimeGetCurrent() - stage2Start
+        // Use fixed concurrency: prefer worker pool size for VisionFeatureEmbedder, otherwise use a bounded CPU-based value
+        var concurrency = min(max(ProcessInfo.processInfo.activeProcessorCount - 1, 1), 4)
+        if let v = embedderLocal as? VisionFeatureEmbedder {
+            let wc = v.workerCount
+            if wc > 0 { concurrency = wc }
+        }
+
+        let (embeddingTotalTime, bestResults) = await runExtraction(concurrency: concurrency)
+        print("Using concurrency=\(concurrency) time=\(embeddingTotalTime)s")
+
+        // Use bestResults as embeddingsByIndex
+        let embeddingsByIndex = bestResults
 
         var embeddings: [[Float]] = []
         var validDetections: [Detection] = []
