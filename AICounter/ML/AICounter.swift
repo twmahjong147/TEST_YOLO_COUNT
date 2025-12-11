@@ -23,23 +23,28 @@ final class AICounter {
     ) async throws -> CountResult {
         let startTime = Date()
         
+        let stage1Start = CFAbsoluteTimeGetCurrent()
         var detections = try detector.detect(
             image: image,
             confidenceThreshold: confidenceThreshold,
             nmsThreshold: nmsThreshold
         )
-        
-        print("Stage 1: Detected \(detections.count) objects")
+        let stage1Time = CFAbsoluteTimeGetCurrent() - stage1Start
+        print("Stage 1: Detected \(detections.count) objects (time: \(stage1Time)s)")
         
         guard !detections.isEmpty else {
             throw ProcessingError.noDetections
         }
         
+        let sizeFilterStart = CFAbsoluteTimeGetCurrent()
         detections = filterSizeOutliers(detections, stdThreshold: 3.0)
-        print("Stage 1.5: \(detections.count) after size filtering")
+        let sizeFilterTime = CFAbsoluteTimeGetCurrent() - sizeFilterStart
+        print("Stage 1.5: \(detections.count) after size filtering (time: \(sizeFilterTime)s)")
         
+        let aspectFilterStart = CFAbsoluteTimeGetCurrent()
         detections = filterAspectRatioOutliers(detections, stdThreshold: 1.0)
-        print("Stage 1.6: \(detections.count) after aspect ratio filtering")
+        let aspectFilterTime = CFAbsoluteTimeGetCurrent() - aspectFilterStart
+        print("Stage 1.6: \(detections.count) after aspect ratio filtering (time: \(aspectFilterTime)s)")
         
         guard detections.count >= 2 else {
             throw ProcessingError.insufficientDetections
@@ -48,11 +53,17 @@ final class AICounter {
         var embeddings: [[Float]] = []
         // var histograms: [[Float]] = []
         var validDetections: [Detection] = []
+        var embeddingTotalTime: CFAbsoluteTime = 0
+        var embedCount = 0
         
         for detection in detections {
             if let crop = ImageProcessor.cropImage(image, to: detection.bbox) {
                 do {
+                    let embStart = CFAbsoluteTimeGetCurrent()
                     let embedding = try embedder.getEmbedding(for: crop)
+                    let embTime = CFAbsoluteTimeGetCurrent() - embStart
+                    embeddingTotalTime += embTime
+                    embedCount += 1
                     embeddings.append(embedding)
                     // compute color histogram for the crop (L2-normalised)
                     // let hist = ImageProcessor.colorHistogram(crop)
@@ -64,23 +75,26 @@ final class AICounter {
             }
         }
         
-        print("Stage 2: Extracted \(embeddings.count) embeddings")
+        let avgEmbedTime = embedCount > 0 ? embeddingTotalTime / Double(embedCount) : 0
+        print("Stage 2: Extracted \(embeddings.count) embeddings (total time: \(embeddingTotalTime)s, avg: \(avgEmbedTime)s)")
         
         guard embeddings.count >= 2 else {
             throw ProcessingError.insufficientDetections
         }
         
+        let clusterStart = CFAbsoluteTimeGetCurrent()
         let clusterLabels = SimilarityClusterer.cluster(
             embeddings: embeddings,
             // colorHistograms: histograms,
             // histogramWeight: 0.20,
             similarityThreshold: similarityThreshold
         )
+        let clusterTime = CFAbsoluteTimeGetCurrent() - clusterStart
         
         let clusterCounts = Dictionary(grouping: clusterLabels, by: { $0 })
             .mapValues { $0.count }
         
-        print("Stage 3: Found \(clusterCounts.count) clusters")
+        print("Stage 3: Found \(clusterCounts.count) clusters (time: \(clusterTime)s)")
         
         guard let largestCluster = clusterCounts.max(by: { $0.value < $1.value }) else {
             throw ProcessingError.insufficientDetections

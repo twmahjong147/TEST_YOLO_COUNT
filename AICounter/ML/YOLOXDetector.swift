@@ -68,7 +68,10 @@ final class YOLOXDetector {
             "image": MLFeatureValue(multiArray: inputArray)
         ])
 
+        let inferenceStart = CFAbsoluteTimeGetCurrent()
         let prediction = try model.prediction(from: input)
+        let inferenceTime = CFAbsoluteTimeGetCurrent() - inferenceStart
+        print("Model inference time: \(inferenceTime)s")
 
         // Extract output multiarray and run postprocess (matches official YOLOX postprocess)
         guard let outputValue = prediction.featureValue(for: "var_2188"), //"var_1430"),
@@ -77,14 +80,18 @@ final class YOLOXDetector {
             throw ProcessingError.predictionFailed("Failed to get output from model")
         }
 
+        let postStart = CFAbsoluteTimeGetCurrent()
         let detections = postProcess(multiArray: multiArray,
                                      imageSize: CGSize(width: image.width, height: image.height),
                                      numClasses: 80,
                                      confThreshold: confidenceThreshold,
                                      nmsThreshold: nmsThreshold,
                                      classAgnostic: true)
+        let postTime = CFAbsoluteTimeGetCurrent() - postStart
+        print("Postprocess time: \(postTime)s")
 
         // Scale boxes back to original image coordinates by dividing by the preprocessing scale (like Python's output[:, :4] /= ratio)
+        let scaleStart = CFAbsoluteTimeGetCurrent()
         let scaledDetections = detections.map { det -> Detection in
             let b = det.bbox
             let scaledBBox = CGRect(x: b.origin.x / scale,
@@ -93,6 +100,8 @@ final class YOLOXDetector {
                                     height: b.height / scale)
             return Detection(id: det.id, bbox: scaledBBox, confidence: det.confidence, classId: det.classId)
         }
+        let scaleTime = CFAbsoluteTimeGetCurrent() - scaleStart
+        print("Scaling detections time: \(scaleTime)s")
 
         return scaledDetections
     }
@@ -100,6 +109,7 @@ final class YOLOXDetector {
     private func applyNMS(detections: [Detection], iouThreshold: Float) -> [Detection] {
         guard detections.count > 1 else { return detections }
 
+        let nmsStart = CFAbsoluteTimeGetCurrent()
         let sorted = detections.sorted { $0.confidence > $1.confidence }
         var keep: [Detection] = []
         var suppressed = Set<Int>()
@@ -118,6 +128,9 @@ final class YOLOXDetector {
                 }
             }
         }
+
+        let nmsTime = CFAbsoluteTimeGetCurrent() - nmsStart
+        print("applyNMS: input=\(detections.count) kept=\(keep.count) time=\(nmsTime)s")
 
         return keep
     }
