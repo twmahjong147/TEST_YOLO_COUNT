@@ -65,3 +65,8 @@ logs/
 output/
 **/__pycache__/
 debug_outputs/
+weights/yolox_l.pth
+weights/yolox_l.mlmodelc/
+weights/yolox_l.mlpackage/
+AICounter/Resources/yolox_l.mlmodelc/
+
