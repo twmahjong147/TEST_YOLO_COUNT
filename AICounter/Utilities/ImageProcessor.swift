@@ -106,7 +106,7 @@ enum ImageProcessor {
         // Draw resized image centered on padded background
         // Place at top-left (0,0) to match Python
         let xOffset = 0 //(resizedWidth == targetWidth) ? 0 : (targetWidth - resizedWidth) / 2
-        let yOffset = 0 //(resizedHeight == targetHeight) ? 0 : (targetHeight - resizedHeight) / 2
+        let yOffset = targetHeight - resizedHeight //(resizedHeight == targetHeight) ? 0 : (targetHeight - resizedHeight) / 2
         context.interpolationQuality = .high
         context.draw(
             image,
