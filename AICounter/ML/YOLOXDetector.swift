@@ -6,6 +6,17 @@ import Vision
 final class YOLOXDetector {
     private var model: MLModel?
     private let inputSize = CGSize(width: 640, height: 640)
+    // COCO class names (80 classes)
+    private let cocoClassNames: [String] = [
+        "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
+        "fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow",
+        "elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee",
+        "skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle",
+        "wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange",
+        "broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed",
+        "dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven",
+        "toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"
+    ]
     
     func loadModel() async throws {
         // Look for compiled model first
@@ -98,7 +109,7 @@ final class YOLOXDetector {
                                     y: b.origin.y / scale,
                                     width: b.width / scale,
                                     height: b.height / scale)
-            return Detection(id: det.id, bbox: scaledBBox, confidence: det.confidence, classId: det.classId)
+            return Detection(id: det.id, bbox: scaledBBox, confidence: det.confidence, classId: det.classId, className: det.className, objConf: det.objConf, clsConf: det.clsConf)                
         }
         let scaleTime = CFAbsoluteTimeGetCurrent() - scaleStart
         print("Scaling detections time: \(scaleTime)s")
@@ -178,7 +189,7 @@ final class YOLOXDetector {
 
             let bbox = CGRect(x: CGFloat(x1), y: CGFloat(y1), width: CGFloat(w), height: CGFloat(h))
             
-            detections.append(Detection(id: i, bbox: bbox, confidence: confidence, classId: maxClassId))
+            detections.append(Detection(id: i, bbox: bbox, confidence: confidence, classId: maxClassId, className: cocoClassNames[maxClassId], objConf: objectness, clsConf: maxClassScore))
         }
         
         // If no detections, return empty

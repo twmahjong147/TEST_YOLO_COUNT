@@ -17,7 +17,7 @@ struct ContentView: View {
     
     private let confidenceThreshold: Float = 0.0001
     private let nmsThreshold: Float  = 0.65
-    private let similarityThreshold: Float = 0.80
+    private let similarityThreshold: Float = 0.75
     
     init() {}
     

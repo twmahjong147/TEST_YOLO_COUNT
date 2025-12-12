@@ -163,6 +163,34 @@ final class AICounter {
         var mainClusteredDetections: [Detection] = []
         for (idx, det) in validDetections.enumerated() {
             let clusterId = clusterLabels[idx]
+            
+            // Save debug crop image with overlay text to debug_outputs (best-effort)            
+            // if let cropCG = ImageProcessor.cropImage(image, to: det.bbox) {
+            //     let ui = UIImage(cgImage: cropCG)
+            //     let text = "\(det.id)"
+            //     UIGraphicsBeginImageContextWithOptions(ui.size, false, ui.scale)
+            //     ui.draw(at: .zero)
+            //     let attrs: [NSAttributedString.Key: Any] = [
+            //         .font: UIFont.systemFont(ofSize: 12),
+            //         .foregroundColor: UIColor.white,
+            //         .backgroundColor: UIColor.black.withAlphaComponent(0.5)
+            //     ]
+            //     let textRect = CGRect(x: 4, y: 4, width: ui.size.width - 8, height: 20)
+            //     text.draw(in: textRect, withAttributes: attrs)
+            //     let annotated = UIGraphicsGetImageFromCurrentImageContext()
+            //     UIGraphicsEndImageContext()
+            //     if let annotated = annotated, let data = annotated.jpegData(compressionQuality: 0.9) {
+            //         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            //         if let docs = docs {
+            //             let debugDir = docs.appendingPathComponent("debug_outputs")
+            //             try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+            //             let fname = "\(idx)_id_\(det.id)_conf_\(String(format: "%.3f", det.confidence))_clus_\(clusterId)_\(det.className!)_obj_\(String(format: "%.3f", det.objConf!))_cls_\(String(format: "%.3f", det.clsConf!)).jpg"
+            //             let url = debugDir.appendingPathComponent(fname)
+            //             try? data.write(to: url)
+            //         }
+            //     }
+            // }
+            
             if (clusterId != largestCluster.key) {
                 continue
             }
@@ -172,39 +200,13 @@ final class AICounter {
                                    bbox: det.bbox,
                                    confidence: det.confidence,
                                    classId: det.classId,
-                                   className: "cluster_\(clusterId)",
+                                   className: det.className,
                                    objConf: det.objConf,
-                                   clsConf: 1.0,
+                                   clsConf: det.clsConf,
                                    clusterId: clusterId,
                                    isMainCluster: true)
             mainClusteredDetections.append(newDet)
-            
-            // Save debug crop image with overlay text to debug_outputs (best-effort)            
-//            if let cropCG = ImageProcessor.cropImage(image, to: det.bbox) {
-//                let ui = UIImage(cgImage: cropCG)
-//                let text = "\(det.id)"
-//                UIGraphicsBeginImageContextWithOptions(ui.size, false, ui.scale)
-//                ui.draw(at: .zero)
-//                let attrs: [NSAttributedString.Key: Any] = [
-//                    .font: UIFont.systemFont(ofSize: 12),
-//                    .foregroundColor: UIColor.white,
-//                    .backgroundColor: UIColor.black.withAlphaComponent(0.5)
-//                ]
-//                let textRect = CGRect(x: 4, y: 4, width: ui.size.width - 8, height: 20)
-//                text.draw(in: textRect, withAttributes: attrs)
-//                let annotated = UIGraphicsGetImageFromCurrentImageContext()
-//                UIGraphicsEndImageContext()
-//                if let annotated = annotated, let data = annotated.jpegData(compressionQuality: 0.9) {
-//                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-//                    if let docs = docs {
-//                        let debugDir = docs.appendingPathComponent("debug_outputs")
-//                        try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
-//                        let fname = "crop_\(idx)_id_\(det.id)_cluster_\(clusterId)_\(Int(Date().timeIntervalSince1970)).jpg"
-//                        let url = debugDir.appendingPathComponent(fname)
-//                        try? data.write(to: url)
-//                    }
-//                }
-//            }
+
         }
         
         // Apply IoA (intersection over smaller-area) suppression within the main cluster
