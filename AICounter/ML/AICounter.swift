@@ -5,7 +5,7 @@ import CoreGraphics
 final class AICounter {
     private let detector = YOLOXDetector()
     // Use Vision featurePrint by default for visual embeddings
-    private let embedder: any VisualEmbedder = VisionFeatureEmbedder() // TinyCLIPEmbedder()
+    private let embedder: any VisualEmbedder = FastViTEmbedder() //FastViTEmbedder() //VisionFeatureEmbedder() // TinyCLIPEmbedder()
     
     private(set) var isLoaded = false
     
